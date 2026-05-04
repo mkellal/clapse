@@ -1,0 +1,591 @@
+{
+  "traceEvents": [
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 4319,
+      "dur": 653,
+      "name": "Source",
+      "args": {
+        "detail": "/usr/include/features.h"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 4212,
+      "dur": 773,
+      "name": "Source",
+      "args": {
+        "detail": "/usr/include/x86_64-linux-gnu/bits/libc-header-start.h"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 6617,
+      "dur": 506,
+      "name": "Source",
+      "args": {
+        "detail": "/usr/include/x86_64-linux-gnu/bits/types/locale_t.h"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 3516,
+      "dur": 5035,
+      "name": "Source",
+      "args": {
+        "detail": "/usr/include/string.h"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 8630,
+      "dur": 3024,
+      "name": "Source",
+      "args": {
+        "detail": "/usr/include/stdio.h"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 12570,
+      "dur": 837,
+      "name": "Source",
+      "args": {
+        "detail": "/usr/include/setjmp.h"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 12190,
+      "dur": 1332,
+      "name": "Source",
+      "args": {
+        "detail": "/workspaces/irods/lib/core/include/irods/region.h"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 2820,
+      "dur": 10851,
+      "name": "Source",
+      "args": {
+        "detail": "/workspaces/irods/lib/core/include/irods/irods_hashtable.h"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 14070,
+      "dur": 933,
+      "name": "Source",
+      "args": {
+        "detail": "/usr/lib/gcc/x86_64-linux-gnu/13/../../../../include/x86_64-linux-gnu/c++/13/bits/c++config.h"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 19388,
+      "dur": 904,
+      "name": "Source",
+      "args": {
+        "detail": "/usr/include/endian.h"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 20512,
+      "dur": 759,
+      "name": "Source",
+      "args": {
+        "detail": "/usr/include/x86_64-linux-gnu/sys/select.h"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 18560,
+      "dur": 3210,
+      "name": "Source",
+      "args": {
+        "detail": "/usr/include/x86_64-linux-gnu/sys/types.h"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 15318,
+      "dur": 8023,
+      "name": "Source",
+      "args": {
+        "detail": "/usr/include/stdlib.h"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 13995,
+      "dur": 10306,
+      "name": "Source",
+      "args": {
+        "detail": "/usr/lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/cstdlib"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 25533,
+      "dur": 1989,
+      "name": "CodeGen Function",
+      "args": {
+        "detail": "newBucket"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 1902,
+      "dur": 29900,
+      "name": "Frontend"
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 34663,
+      "dur": 531,
+      "name": "RunPass",
+      "args": {
+        "detail": "X86 Assembly Printer"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 33335,
+      "dur": 1866,
+      "name": "OptFunction",
+      "args": {
+        "detail": "newBucket"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 36186,
+      "dur": 8467,
+      "name": "RunPass",
+      "args": {
+        "detail": "X86 DAG->DAG Instruction Selection"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 36172,
+      "dur": 8709,
+      "name": "OptFunction",
+      "args": {
+        "detail": "_ZL23cpStringExtForHashTablePKcP6region"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 32534,
+      "dur": 14758,
+      "name": "OptModule",
+      "args": {
+        "detail": "/workspaces/irods/lib/core/src/hashtable.cpp"
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 32532,
+      "dur": 14797,
+      "name": "CodeGenPasses"
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 31978,
+      "dur": 15388,
+      "name": "Backend"
+    },
+    {
+      "pid": 1259,
+      "tid": 1259,
+      "ph": "X",
+      "ts": 23,
+      "dur": 47484,
+      "name": "ExecuteCompiler"
+    },
+    {
+      "pid": 1259,
+      "tid": 1260,
+      "ph": "X",
+      "ts": 0,
+      "dur": 47483,
+      "name": "Total ExecuteCompiler",
+      "args": {
+        "count": 1,
+        "avg ms": 47
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1261,
+      "ph": "X",
+      "ts": 0,
+      "dur": 30018,
+      "name": "Total Frontend",
+      "args": {
+        "count": 2,
+        "avg ms": 15
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1262,
+      "ph": "X",
+      "ts": 0,
+      "dur": 21155,
+      "name": "Total Source",
+      "args": {
+        "count": 2,
+        "avg ms": 10
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1263,
+      "ph": "X",
+      "ts": 0,
+      "dur": 15387,
+      "name": "Total Backend",
+      "args": {
+        "count": 1,
+        "avg ms": 15
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1264,
+      "ph": "X",
+      "ts": 0,
+      "dur": 14796,
+      "name": "Total CodeGenPasses",
+      "args": {
+        "count": 1,
+        "avg ms": 14
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1265,
+      "ph": "X",
+      "ts": 0,
+      "dur": 14758,
+      "name": "Total OptModule",
+      "args": {
+        "count": 1,
+        "avg ms": 14
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1266,
+      "ph": "X",
+      "ts": 0,
+      "dur": 13363,
+      "name": "Total OptFunction",
+      "args": {
+        "count": 17,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1267,
+      "ph": "X",
+      "ts": 0,
+      "dur": 13182,
+      "name": "Total RunPass",
+      "args": {
+        "count": 1173,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1268,
+      "ph": "X",
+      "ts": 0,
+      "dur": 3740,
+      "name": "Total CodeGen Function",
+      "args": {
+        "count": 17,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1269,
+      "ph": "X",
+      "ts": 0,
+      "dur": 1086,
+      "name": "Total ParseClass",
+      "args": {
+        "count": 39,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1270,
+      "ph": "X",
+      "ts": 0,
+      "dur": 184,
+      "name": "Total DebugType",
+      "args": {
+        "count": 152,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1271,
+      "ph": "X",
+      "ts": 0,
+      "dur": 106,
+      "name": "Total EvaluateAsRValue",
+      "args": {
+        "count": 238,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1272,
+      "ph": "X",
+      "ts": 0,
+      "dur": 75,
+      "name": "Total EvaluateForOverflow",
+      "args": {
+        "count": 88,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1273,
+      "ph": "X",
+      "ts": 0,
+      "dur": 69,
+      "name": "Total EvaluateAsInt",
+      "args": {
+        "count": 154,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1274,
+      "ph": "X",
+      "ts": 0,
+      "dur": 60,
+      "name": "Total Optimizer",
+      "args": {
+        "count": 1,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1275,
+      "ph": "X",
+      "ts": 0,
+      "dur": 59,
+      "name": "Total EvaluateAsBooleanCondition",
+      "args": {
+        "count": 71,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1276,
+      "ph": "X",
+      "ts": 0,
+      "dur": 26,
+      "name": "Total AlwaysInlinerPass",
+      "args": {
+        "count": 1,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1277,
+      "ph": "X",
+      "ts": 0,
+      "dur": 20,
+      "name": "Total ModuleToFunctionPassAdaptor",
+      "args": {
+        "count": 1,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1278,
+      "ph": "X",
+      "ts": 0,
+      "dur": 15,
+      "name": "Total isPotentialConstantExpr",
+      "args": {
+        "count": 4,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1279,
+      "ph": "X",
+      "ts": 0,
+      "dur": 15,
+      "name": "Total AnnotationRemarksPass",
+      "args": {
+        "count": 17,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1280,
+      "ph": "X",
+      "ts": 0,
+      "dur": 5,
+      "name": "Total EvaluateKnownConstInt",
+      "args": {
+        "count": 12,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1281,
+      "ph": "X",
+      "ts": 0,
+      "dur": 4,
+      "name": "Total PerformPendingInstantiations",
+      "args": {
+        "count": 1,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1282,
+      "ph": "X",
+      "ts": 0,
+      "dur": 4,
+      "name": "Total TargetLibraryAnalysis",
+      "args": {
+        "count": 17,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1283,
+      "ph": "X",
+      "ts": 0,
+      "dur": 3,
+      "name": "Total CoroConditionalWrapper",
+      "args": {
+        "count": 1,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1284,
+      "ph": "X",
+      "ts": 0,
+      "dur": 1,
+      "name": "Total ProfileSummaryAnalysis",
+      "args": {
+        "count": 1,
+        "avg ms": 0
+      }
+    },
+    {
+      "pid": 1259,
+      "tid": 1285,
+      "ph": "X",
+      "ts": 0,
+      "dur": 0,
+      "name": "Total InnerAnalysisManagerProxy<AnalysisManager<Function>, Module>",
+      "args": {
+        "count": 1,
+        "avg ms": 0
+      }
+    },
+    {
+      "cat": "",
+      "pid": 1259,
+      "tid": 1259,
+      "ts": 0,
+      "ph": "M",
+      "name": "process_name",
+      "args": {
+        "name": "clang-16"
+      }
+    },
+    {
+      "cat": "",
+      "pid": 1259,
+      "tid": 1259,
+      "ts": 0,
+      "ph": "M",
+      "name": "thread_name",
+      "args": {
+        "name": "clang++"
+      }
+    }
+  ],
+  "beginningOfTime": 1777801137615439
+}
