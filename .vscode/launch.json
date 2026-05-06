@@ -1,0 +1,32 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in library 'clapse'",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=clapse",
+          "--package=clapse"
+        ],
+        "filter": {
+          "name": "clapse",
+          "kind": "bin"
+        }
+      },
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "${input:buildpath}"
+      ],
+    },
+  ],
+  "inputs": [
+    {
+      "id": "buildpath",
+      "type": "promptString",
+      "description": "Enter build path"
+    }
+  ]
+}
