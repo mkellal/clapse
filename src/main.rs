@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod traces;
+mod widgets;
 use app::App;
 
 fn main() -> color_eyre::Result<()> {

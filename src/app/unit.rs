@@ -9,6 +9,7 @@ pub struct Unit {
     pub name: String,
     pub trace_file: std::path::PathBuf,
     pub spans: Vec<Span>,
+    pub total_duration: f64,
 }
 
 pub fn get_units(build_dir: &std::path::PathBuf) -> Vec<Unit> {
@@ -22,11 +23,22 @@ pub fn get_units(build_dir: &std::path::PathBuf) -> Vec<Unit> {
                 .to_string_lossy()
                 .to_string();
             let spans = get_spans(trace_file);
+            let total_duration = spans
+                .iter()
+                .filter_map(|span| {
+                    if span.depth == 0 {
+                        Some(span.duration)
+                    } else {
+                        None
+                    }
+                })
+                .sum();
 
             Unit {
                 name,
                 trace_file: trace_file.clone(),
                 spans,
+                total_duration,
             }
         })
         .collect();

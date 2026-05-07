@@ -17,6 +17,7 @@ pub struct Span {
     pub thread_id: u32,
     pub contained_by_index: Option<usize>,
     pub contains_indices: Vec<usize>,
+    pub depth: usize,
 }
 
 pub fn get_spans(trace_file: &PathBuf) -> Vec<Span> {
@@ -65,6 +66,7 @@ pub fn get_spans(trace_file: &PathBuf) -> Vec<Span> {
                     contains_indices: Vec::new(),
                     contained_by_index: None,
                     thread_id: event.tid,
+                    depth: 0,
                 })
             } else {
                 None
@@ -104,6 +106,7 @@ fn link_spans(spans: &mut Vec<Span>) {
         if let Some(&parent_idx) = active_parents.last() {
             spans[i].contained_by_index = Some(parent_idx);
             spans[parent_idx].contains_indices.push(i);
+            spans[i].depth = active_parents.len();
         }
 
         active_parents.push(i);
