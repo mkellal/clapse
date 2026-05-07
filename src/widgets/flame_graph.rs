@@ -14,132 +14,158 @@ pub struct Flamegraph<'a> {
     pub total_duration: f64,
 }
 
+#[derive(Clone, Copy)]
+enum SubcellAlign {
+    Left,
+    Right,
+}
+
 impl<'a> Widget for Flamegraph<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let time_per_col = self.total_duration / area.width as f64;
+        let mut subcell_tracker: HashMap<(u16, u16), (f64, SubcellAlign, Color)> = HashMap::new();
 
-        // Track the largest fraction drawn into any specific (X, Y) cell
-        let mut subcell_tracker: HashMap<(u16, u16), f64> = HashMap::new();
+        let try_claim = |tracker: &mut HashMap<(u16, u16), (f64, SubcellAlign, Color)>,
+                         col: i32,
+                         y: u16,
+                         fraction: f64,
+                         align: SubcellAlign,
+                         color: Color| {
+            let x = area.x as i32 + col;
+            if x >= area.x as i32 && x < area.right() as i32 {
+                let cell_coord = (x as u16, y);
+                let current = tracker.get(&cell_coord).map(|(f, _, _)| *f).unwrap_or(0.0);
+                if fraction > current {
+                    tracker.insert(cell_coord, (fraction, align, color));
+                }
+            }
+        };
 
         for (i, span) in self.spans.iter().enumerate() {
             let y = area.y + span.depth as u16;
 
-            // 1. Cull if completely below the screen
             if y >= area.bottom() {
                 continue;
             }
 
             let bg_color = span.get_checkerboard_color(i);
-
             let exact_width_cols = span.duration / time_per_col;
             let start_float = span.start_time / time_per_col;
+            let end_float = start_float + exact_width_cols;
 
-            // ==========================================
-            // PATH A: THE SUB-CELL RENDERER (Duration < 1 Column)
-            // ==========================================
-            if exact_width_cols < 1.0 {
-                // Because it's smaller than a grid cell, it might straddle a boundary (0.9 to 1.1).
-                // To decide which cell gets the block, we find the span's exact center.
-                let center_float = start_float + (exact_width_cols / 2.0);
+            let start_col = start_float.floor() as i32;
+            let end_col = end_float.floor() as i32;
+            let start_frac = start_float.fract();
+            let end_frac = end_float.fract();
 
-                // Snap the center to our grid
-                let grid_x = area.x as i32 + center_float.floor() as i32;
+            if start_col == end_col {
+                try_claim(
+                    &mut subcell_tracker,
+                    start_col,
+                    y,
+                    exact_width_cols,
+                    SubcellAlign::Left,
+                    bg_color,
+                );
+                continue;
+            }
 
-                // Cull if off-screen
-                if grid_x < area.x as i32 || grid_x >= area.right() as i32 || y >= area.bottom() {
-                    continue;
-                }
+            // Pre-fraction
+            if start_frac > 0.0 {
+                try_claim(
+                    &mut subcell_tracker,
+                    start_col,
+                    y,
+                    1.0 - start_frac,
+                    SubcellAlign::Right,
+                    bg_color,
+                );
+            }
 
-                let visible_x = grid_x as u16;
-                let bg_color = span.get_checkerboard_color(i);
-                let cell_coord = (visible_x, y);
+            // Core
+            let core_start = start_float.ceil() as i32;
+            let core_end = end_float.floor() as i32;
+            let core_width = (core_end - core_start).max(0);
 
-                // Track the largest sub-cell (using your exact exact_width_cols)
-                let current_max = subcell_tracker.get(&cell_coord).copied().unwrap_or(0.0);
-                if exact_width_cols > current_max {
-                    subcell_tracker.insert(cell_coord, exact_width_cols);
+            if core_width > 0 {
+                let x_start = area.x as i32 + core_start;
+                let x_end = area.x as i32 + core_end;
 
-                    let partial_char = if exact_width_cols < 0.125 {
-                        "▏"
-                    } else if exact_width_cols < 0.25 {
-                        "▎"
-                    } else if exact_width_cols < 0.375 {
-                        "▍"
-                    } else if exact_width_cols < 0.5 {
-                        "▌"
-                    } else if exact_width_cols < 0.625 {
-                        "▋"
-                    } else if exact_width_cols < 0.75 {
-                        "▊"
-                    } else if exact_width_cols < 0.875 {
-                        "▉"
-                    } else {
-                        "█"
-                    };
+                if x_end > area.x as i32 && x_start < area.right() as i32 {
+                    let visible_start = x_start.max(area.x as i32) as u16;
+                    let visible_end = x_end.min(area.right() as i32) as u16;
+                    let width = visible_end.saturating_sub(visible_start);
 
-                    if let Some(cell) = buf.cell_mut(cell_coord) {
-                        cell.set_symbol(partial_char);
-                        cell.set_fg(bg_color);
+                    if width > 0 {
+                        let fg_color = match bg_color {
+                            Color::DarkGray => Color::White,
+                            _ => Color::Black,
+                        };
+
+                        let rect = Rect::new(visible_start, y, width, 1);
+                        buf.set_style(rect, Style::default().bg(bg_color));
+
+                        let width_usize = width as usize;
+                        let label_len = span.label.chars().count();
+
+                        let display_text = if width_usize == 1 {
+                            "𝅏".to_string()
+                        } else if label_len > width_usize {
+                            let truncated: String =
+                                span.label.chars().take(width_usize - 1).collect();
+                            truncated + "…"
+                        } else {
+                            span.label.clone()
+                        };
+
+                        buf.set_stringn(
+                            rect.x,
+                            rect.y,
+                            &display_text,
+                            rect.width as usize,
+                            Style::default().fg(fg_color).bg(bg_color),
+                        );
                     }
                 }
-                continue; // Done rendering this tiny span!
             }
 
-            // ==========================================
-            // PATH B: THE STANDARD RENDERER (Duration >= 1 Column)
-            // ==========================================
-            // It's a full block! Now we use .round() on start and end independently
-            // to guarantee parents and children perfectly align without spilling.
-            let end_float = (span.start_time + span.duration) / time_per_col;
-
-            let x_start_i32 = area.x as i32 + start_float.round() as i32;
-            let x_end_i32 = area.x as i32 + end_float.round() as i32;
-
-            // Cull if off-screen
-            if x_end_i32 <= area.x as i32
-                || x_start_i32 >= area.right() as i32
-                || y >= area.bottom()
-            {
-                continue;
+            // Post-fraction
+            if end_frac > 0.0 {
+                try_claim(&mut subcell_tracker, end_col, y, end_frac, SubcellAlign::Left, bg_color);
             }
+        }
 
-            // Clip to screen
-            let visible_start = x_start_i32.max(area.x as i32) as u16;
-            let visible_end = x_end_i32.min(area.right() as i32) as u16;
-            let width = visible_end.saturating_sub(visible_start);
-
-            // Prevent weird integer collapse on exact boundary lines
-            if width == 0 {
-                continue;
-            }
-            
-            let fg_color = match bg_color {
-                Color::DarkGray => Color::White,
-                _ => Color::Black,
-            };
-
-            let rect = Rect::new(visible_start, y, width, 1);
-            buf.set_style(rect, Style::default().bg(bg_color));
-
-            let width_usize = width as usize;
-            let label_len = span.label.chars().count();
-
-            let display_text = if width_usize == 1 {
-                "𝅏".to_string()
-            } else if label_len > width_usize {
-                let truncated: String = span.label.chars().take(width_usize - 1).collect();
-                truncated + "…"
+        for ((x, y), (fraction, align, color)) in &subcell_tracker {
+            let partial_char = if matches!(align, SubcellAlign::Right) {
+                if *fraction < 0.25 {
+                    "▕"
+                } else if *fraction < 0.5 {
+                    "▐"
+                } else {
+                    "█"
+                }
+            } else if *fraction < 0.125 {
+                "▏"
+            } else if *fraction < 0.25 {
+                "▎"
+            } else if *fraction < 0.375 {
+                "▍"
+            } else if *fraction < 0.5 {
+                "▌"
+            } else if *fraction < 0.625 {
+                "▋"
+            } else if *fraction < 0.75 {
+                "▊"
+            } else if *fraction < 0.875 {
+                "▉"
             } else {
-                span.label.clone()
+                "█"
             };
 
-            buf.set_stringn(
-                rect.x,
-                rect.y,
-                &display_text,
-                rect.width as usize,
-                Style::default().fg(fg_color).bg(bg_color),
-            );
+            if let Some(cell) = buf.cell_mut((*x, *y)) {
+                cell.set_symbol(partial_char);
+                cell.set_fg(*color);
+            }
         }
     }
 }
