@@ -24,8 +24,11 @@ impl<'a> Widget for Flamegraph<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let time_per_col = self.total_duration / area.width as f64;
         let mut subcell_tracker: HashMap<(u16, u16), (f64, SubcellAlign, Color)> = HashMap::new();
+        let mut cell_owners: Vec<Vec<(u16, u16)>> = vec![Vec::new(); self.spans.len()];
 
         let try_claim = |tracker: &mut HashMap<(u16, u16), (f64, SubcellAlign, Color)>,
+                         owners: &mut Vec<Vec<(u16, u16)>>,
+                         span_idx: usize,
                          col: i32,
                          y: u16,
                          fraction: f64,
@@ -35,16 +38,28 @@ impl<'a> Widget for Flamegraph<'a> {
             if x >= area.x as i32 && x < area.right() as i32 {
                 let cell_coord = (x as u16, y);
                 let current = tracker.get(&cell_coord).map(|(f, _, _)| *f).unwrap_or(0.0);
-                if fraction > current {
-                    tracker.insert(cell_coord, (fraction, align, color));
+                let container_index = self.spans[span_idx].contained_by_index;
+                let is_parent_top_cell_owner = if let Some(idx) = container_index
+                    && y > area.y
+                {
+                    owners[idx].iter().any(|&coord| coord == (x as u16, y - 1))
+                } else {
+                    true
+                };
+                let parent_align = container_index.and_then(|_idx| {
+                    tracker.get(&(x as u16, y - 1)).map(|(_, align, _)| *align)
+                });
+                if is_parent_top_cell_owner && fraction > current {
+                    tracker.insert(cell_coord, (fraction, parent_align.unwrap_or(align), if is_parent_top_cell_owner { color } else { Color::Red }));
+                    owners[span_idx].push(cell_coord);
                 }
             }
         };
 
         for (i, span) in self.spans.iter().enumerate() {
-            let y = area.y + span.depth as u16;
+            let row = area.y + span.depth as u16;
 
-            if y >= area.bottom() {
+            if row >= area.bottom() {
                 continue;
             }
 
@@ -55,28 +70,38 @@ impl<'a> Widget for Flamegraph<'a> {
 
             let start_col = start_float.floor() as i32;
             let end_col = end_float.floor() as i32;
-            let start_frac = start_float.fract();
-            let end_frac = end_float.fract();
+            let startfrac = start_float.fract();
+            let prefrac = 1.0 - startfrac;
+            let postfrac = end_float.fract();
 
             if start_col == end_col {
+                let align = if startfrac > 0.5 {
+                    SubcellAlign::Right
+                } else {
+                    SubcellAlign::Left
+                };
                 try_claim(
                     &mut subcell_tracker,
+                    &mut cell_owners,
+                    i,
                     start_col,
-                    y,
+                    row,
                     exact_width_cols,
-                    SubcellAlign::Left,
+                    align,
                     bg_color,
                 );
                 continue;
             }
 
             // Pre-fraction
-            if start_frac > 0.0 {
+            if prefrac < 1.0 {
                 try_claim(
                     &mut subcell_tracker,
+                    &mut cell_owners,
+                    i,
                     start_col,
-                    y,
-                    1.0 - start_frac,
+                    row,
+                    prefrac,
                     SubcellAlign::Right,
                     bg_color,
                 );
@@ -102,8 +127,12 @@ impl<'a> Widget for Flamegraph<'a> {
                             _ => Color::Black,
                         };
 
-                        let rect = Rect::new(visible_start, y, width, 1);
+                        let rect = Rect::new(visible_start, row, width, 1);
                         buf.set_style(rect, Style::default().bg(bg_color));
+
+                        for x in visible_start..visible_end {
+                            cell_owners[i].push((x, row));
+                        }
 
                         let width_usize = width as usize;
                         let label_len = span.label.chars().count();
@@ -130,8 +159,17 @@ impl<'a> Widget for Flamegraph<'a> {
             }
 
             // Post-fraction
-            if end_frac > 0.0 {
-                try_claim(&mut subcell_tracker, end_col, y, end_frac, SubcellAlign::Left, bg_color);
+            if postfrac > 0.0 {
+                try_claim(
+                    &mut subcell_tracker,
+                    &mut cell_owners,
+                    i,
+                    end_col,
+                    row,
+                    postfrac,
+                    SubcellAlign::Left,
+                    bg_color,
+                );
             }
         }
 
@@ -197,12 +235,12 @@ impl Span {
 
         // 1. Shift based on vertical depth
         if self.depth % 2 != 0 {
-            brightness_shift -= 20; // Odd rows are slightly darker
+            brightness_shift -= 40; // Odd rows are slightly darker
         }
 
         // 2. Shift based on horizontal sibling position
         if horizontal_index % 2 != 0 {
-            brightness_shift += 10; // Odd siblings are slightly lighter
+            brightness_shift += 20; // Odd siblings are slightly lighter
         }
 
         // 3. Apply the shift and clamp to valid u8 RGB limits (0-255)
