@@ -27,8 +27,8 @@ impl Widget for &mut App {
         let scrollbar_height = 2;
         let graph_height = area.height.saturating_sub(scrollbar_height);
 
-        let graph_area = Rect::new(area.x, area.y, area.width, graph_height);
-        let scrollbar_area = Rect::new(area.x, area.y + graph_height, area.width, scrollbar_height);
+        let scrollbar_area = Rect::new(area.x, area.y, area.width, scrollbar_height);
+        let graph_area = Rect::new(area.x, area.y + scrollbar_height, area.width, graph_height);
 
         let flamegraph = Flamegraph {
             spans: self
@@ -39,14 +39,14 @@ impl Widget for &mut App {
             total_duration: visible_duration,
             start_time: self.start_time,
         };
-        flamegraph.render(graph_area, buf);
-
         let scrollbar = DurationRange {
             total_duration,
             start: self.start_time,
             visible_duration,
         };
         scrollbar.render(scrollbar_area, buf);
+
+        flamegraph.render(graph_area, buf);
     }
 }
 
