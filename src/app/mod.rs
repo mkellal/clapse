@@ -10,7 +10,7 @@ use ratatui::widgets::Widget;
 pub mod span;
 pub mod unit;
 use self::unit::Unit;
-use crate::app::unit::get_units;
+use crate::app::unit::{FollowingSpanDirection, get_units};
 use crate::cli;
 use crate::widgets::flame_graph::Flamegraph;
 use crate::widgets::time_range::DurationRange;
@@ -19,6 +19,7 @@ pub struct App {
     units: Vec<Unit>,
     zoom: f64,
     start_time: f64,
+    selected_indexes: Option<(usize, usize)>, // (unit index, span index)
 }
 
 impl Widget for &mut App {
@@ -43,6 +44,7 @@ impl Widget for &mut App {
                 .first()
                 .map(|u| u.spans.as_slice())
                 .unwrap_or(&[]),
+            selected_span_index: self.selected_indexes.map(|(_, si)| si),
             total_duration: visible_duration,
             start_time: self.start_time,
         };
@@ -65,6 +67,7 @@ impl Default for App {
             units,
             zoom: 1.0,
             start_time: 0.0,
+            selected_indexes: None,
         }
     }
 }
@@ -150,6 +153,69 @@ impl App {
                             let max_start =
                                 (self.total_duration() - self.visible_duration()).max(0.0);
                             self.start_time = (self.start_time + step).min(max_start);
+                        }
+
+                        // span selection
+                        KeyCode::Left => {
+                            let (unit_index, span_index) = match self.selected_indexes {
+                                Some((ui, si)) => {
+                                    let unit = &self.units[ui];
+                                    let previous = unit.get_following_span_index(
+                                        si,
+                                        FollowingSpanDirection::Previous,
+                                    );
+                                    match previous {
+                                        Some(prev_index) => (ui, prev_index),
+                                        None => (ui, si),
+                                    }
+                                }
+                                None => (0, 0),
+                            };
+                            self.selected_indexes = Some((unit_index, span_index));
+                        }
+                        KeyCode::Right => {
+                            let (unit_index, span_index) = match self.selected_indexes {
+                                Some((ui, si)) => {
+                                    let unit = &self.units[ui];
+                                    let next = unit
+                                        .get_following_span_index(si, FollowingSpanDirection::Next);
+                                    match next {
+                                        Some(next_index) => (ui, next_index),
+                                        None => (ui, si),
+                                    }
+                                }
+                                None => (0, 0),
+                            };
+                            self.selected_indexes = Some((unit_index, span_index));
+                        }
+                        KeyCode::Up => {
+                            let (unit_index, span_index) = match self.selected_indexes {
+                                Some((ui, si)) => {
+                                    let unit = &self.units[ui];
+                                    let parent = unit.get_parent_span(&unit.spans[si]);
+                                    match parent {
+                                        Some(parent_span) => (ui, parent_span.index_in_unit),
+                                        None => (ui, si),
+                                    }
+                                }
+                                None => (0, 0),
+                            };
+                            self.selected_indexes = Some((unit_index, span_index));
+                        }
+                        KeyCode::Down => {
+                            let (unit_index, span_index) = match self.selected_indexes {
+                                Some((ui, si)) => {
+                                    let unit = &self.units[ui];
+                                    let children = unit.get_child_spans(&unit.spans[si]);
+                                    if let Some(first_child) = children.first() {
+                                        (ui, first_child.index_in_unit)
+                                    } else {
+                                        (ui, si)
+                                    }
+                                }
+                                None => (0, 0),
+                            };
+                            self.selected_indexes = Some((unit_index, span_index));
                         }
                         _ => {}
                     }

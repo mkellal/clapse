@@ -15,6 +15,7 @@ pub struct Span {
     pub duration: f64,
     pub contained_by_index: Option<usize>,
     pub contains_indices: Vec<usize>,
+    pub index_in_unit: usize,
     pub depth: usize,
 }
 
@@ -58,6 +59,7 @@ pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData) {
             duration: event.dur.unwrap_or(0.0),
             contains_indices: Vec::new(),
             contained_by_index: None,
+            index_in_unit: 0,
             depth: 0,
         })
     }));
@@ -79,9 +81,10 @@ fn link_spans(spans: &mut Vec<Span>) {
     });
 
     // Reset linkage on all child spans (root at 0 is already clean)
-    for span in spans[1..].iter_mut() {
+    for (i, span) in spans[1..].iter_mut().enumerate() {
         span.contained_by_index = None;
         span.contains_indices.clear();
+        span.index_in_unit = i + 1; // +1 because we skipped the root span at index 0
         span.depth = 0;
     }
 

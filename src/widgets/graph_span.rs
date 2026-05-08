@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 
-use ratatui::{buffer::Buffer, layout::Rect, style::{Color, Style}};
+use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+    style::{Color, Style},
+};
 
 use crate::app::span::Span;
 
@@ -20,19 +24,25 @@ pub struct GraphSpan<'a> {
 impl<'a> GraphSpan<'a> {
     pub fn render_span(
         &self,
-        span_idx: usize,
-        sibling_index: usize,
+        span_index: usize,
+        index_in_depth: usize,
         allowed_area: Rect,
         buf: &mut Buffer,
         subcell_tracker: &mut HashMap<(u16, u16), (f64, SubcellAlign, Color)>,
+        selected_span_index: Option<usize>,
     ) {
         if allowed_area.width == 0 {
             return;
         }
 
-        let span = &self.spans[span_idx];
+        let span = &self.spans[span_index];
+        let is_selected = Some(span_index) == selected_span_index;
         let y = allowed_area.y;
-        let bg_color = span.get_checkerboard_color(sibling_index);
+        let bg_color = if is_selected {
+            Color::Rgb(255, 255, 255)
+        } else {
+            span.get_checkerboard_color(index_in_depth)
+        };
         let fa = self.flamegraph_area;
 
         let start_float = (span.start_time - self.start_time) / self.time_per_col;
@@ -98,20 +108,19 @@ impl<'a> GraphSpan<'a> {
             } else {
                 span.label.clone()
             };
-            buf.set_stringn(
-                core_x_start,
-                y,
-                &display_text,
-                w,
-                Style::default().fg(fg_color).bg(bg_color),
-            );
+            let mut text_style: Style = Style::default().fg(fg_color).bg(bg_color);
+            if is_selected {
+                text_style = text_style.bold();
+            }
+            buf.set_stringn(core_x_start, y, &display_text, w, text_style);
 
             let child_y = y + 1;
             if child_y < fa.bottom() {
-                for (sibling_i, &child_idx) in span.contains_indices.iter().enumerate() {
+                for (index_in_depth, &child_idx) in span.contains_indices.iter().enumerate() {
                     let child = &self.spans[child_idx];
                     let cs = (child.start_time - self.start_time) / self.time_per_col;
-                    let ce = (child.start_time + child.duration - self.start_time) / self.time_per_col;
+                    let ce =
+                        (child.start_time + child.duration - self.start_time) / self.time_per_col;
                     let cx_start = (fa.x as i32 + cs.round() as i32)
                         .max(core_rect.x as i32)
                         .min(core_rect.right() as i32) as u16;
@@ -124,10 +133,11 @@ impl<'a> GraphSpan<'a> {
                     }
                     self.render_span(
                         child_idx,
-                        sibling_i,
+                        index_in_depth,
                         Rect::new(cx_start, child_y, cw, 1),
                         buf,
                         subcell_tracker,
+                        selected_span_index,
                     );
                 }
             }
