@@ -110,7 +110,7 @@ impl App {
                     let shift = key
                         .modifiers
                         .contains(crossterm::event::KeyModifiers::SHIFT);
-                    // Ctrl+Up/Down = precise zoom (×1.1), Ctrl+PageUp/PageDown = fast zoom (×2)
+                    // Ctrl+Up/Down = precise zoom (×1.1), PageUp/PageDown = fast zoom (×2)
                     // Ctrl+Shift+Left/Right = precise pan (5%), Ctrl+Left/Right = fast pan (25%)
                     let pan_factor = if shift { 0.05 } else { 0.25 };
                     match key.code {

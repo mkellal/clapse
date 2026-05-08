@@ -1,6 +1,4 @@
-use std::path::PathBuf;
-
-use crate::traces::event::parse_trace_file;
+use crate::traces::event::TraceData;
 
 pub enum SpanType {
     Unit,
@@ -15,51 +13,43 @@ pub struct Span {
     pub details: Option<String>,
     pub start_time: f64,
     pub duration: f64,
-    pub thread_id: u32,
     pub contained_by_index: Option<usize>,
     pub contains_indices: Vec<usize>,
     pub depth: usize,
 }
 
-/// Parses `trace_file`, appends the resulting spans to `spans` (which must
-/// already contain the root Unit span at index 0), then links everything and
-/// sets the root span's duration/start_time from its children's actual bounds.
-pub fn add_spans(spans: &mut Vec<Span>, trace_file: &PathBuf) {
-    let data = match parse_trace_file(trace_file) {
-        Some(d) => d,
-        None => return,
-    };
-
-    spans.extend(data.trace_events.into_iter().filter_map(|event| {
+pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData) {
+    spans.extend(data.trace_events.iter().filter_map(|event| {
         if event.ph != "X" {
             return None;
         }
         let name = event.name.clone().unwrap_or_default();
-        let args_detail = event.args.unwrap_or_default().detail.unwrap_or_default();
-        let (type_, label, details): (SpanType, String, Option<String>) =
-            match name.as_str() {
-                "Source" => (SpanType::Source, args_detail, None),
-                "ParseClass" => (SpanType::Class, args_detail, Some("Parsing".to_string())),
-                "ParseTemplate" => {
-                    (SpanType::Template, args_detail, Some("Parsing".to_string()))
-                }
-                "InstantiateClass" => (
-                    SpanType::Class,
-                    args_detail,
-                    Some("Instantiation".to_string()),
-                ),
-                "InstantiateTemplate" => (
-                    SpanType::Template,
-                    args_detail,
-                    Some("Instantiation".to_string()),
-                ),
-                "Frontend"
-                | "Backend"
-                | "PerformPendingInstantiations"
-                | "CodeGen Function"
-                | "DebugType" => (SpanType::Task, name, Some(args_detail)),
-                _ => return None,
-            };
+        let args_detail = event
+            .args
+            .as_ref()
+            .and_then(|a| a.detail.clone())
+            .unwrap_or_default();
+        let (type_, label, details): (SpanType, String, Option<String>) = match name.as_str() {
+            "Source" => (SpanType::Source, args_detail.clone(), None),
+            "ParseClass" => (SpanType::Class, args_detail, Some("Parsing".to_string())),
+            "ParseTemplate" => (SpanType::Template, args_detail, Some("Parsing".to_string())),
+            "InstantiateClass" => (
+                SpanType::Class,
+                args_detail,
+                Some("Instantiation".to_string()),
+            ),
+            "InstantiateTemplate" => (
+                SpanType::Template,
+                args_detail,
+                Some("Instantiation".to_string()),
+            ),
+            "Frontend"
+            | "Backend"
+            | "PerformPendingInstantiations"
+            | "CodeGen Function"
+            | "DebugType" => (SpanType::Task, name, Some(args_detail.clone())),
+            _ => return None,
+        };
         Some(Span {
             type_,
             label,
@@ -68,7 +58,6 @@ pub fn add_spans(spans: &mut Vec<Span>, trace_file: &PathBuf) {
             duration: event.dur.unwrap_or(0.0),
             contains_indices: Vec::new(),
             contained_by_index: None,
-            thread_id: event.tid,
             depth: 0,
         })
     }));
@@ -121,8 +110,8 @@ fn link_spans(spans: &mut Vec<Span>) {
         active_parents.push(i);
     }
 
-    // Finalise root span bounds from its direct children
     if spans.len() > 1 {
+        // Finalise root span bounds from its direct children
         let min_start = spans[1..]
             .iter()
             .filter(|s| s.contained_by_index == Some(0))
@@ -137,5 +126,6 @@ fn link_spans(spans: &mut Vec<Span>) {
             spans[0].start_time = min_start;
             spans[0].duration = max_end - min_start;
         }
+        // set
     }
 }
