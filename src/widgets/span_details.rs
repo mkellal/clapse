@@ -50,14 +50,7 @@ impl SpanType {
     }
 
     pub fn badge_colors(&self) -> (Color, Color) {
-        let (r, g, b) = match self {
-            SpanType::Unit => (250, 179, 135),
-            SpanType::Source => (116, 199, 236),
-            SpanType::Class => (203, 166, 247),
-            SpanType::Template => (249, 226, 175),
-            SpanType::Task => (172, 176, 190),
-        };
-        (Color::Black, Color::Rgb(r, g, b))
+        (Color::Black, self.base_color())
     }
 }
 

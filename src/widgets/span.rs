@@ -8,7 +8,7 @@ use ratatui::{
     widgets::Widget,
 };
 
-use crate::app::span::{Span, SpanType};
+use crate::app::span::Span;
 
 #[derive(Clone, Copy)]
 pub enum SubcellAlign {
@@ -182,27 +182,12 @@ pub fn flush_subcell_tracker(
 }
 
 impl Span {
-    fn base_rgb(&self) -> (u8, u8, u8) {
-        match self.type_ {
-            // Catppuccin Peach (warm pastel orange)
-            SpanType::Unit => (250, 179, 135),
-
-            // Catppuccin Sapphire (Soft Pastel Blue)
-            SpanType::Source => (116, 199, 236),
-
-            // Catppuccin Mauve (Soft Pastel Purple)
-            SpanType::Class => (203, 166, 247),
-
-            // Catppuccin Yellow (Soft Pastel Yellow)
-            SpanType::Template => (249, 226, 175),
-
-            // Catppuccin Subtext0 (light muted gray)
-            SpanType::Task => (172, 176, 190),
-        }
-    }
-
     pub fn get_checkerboard_color(&self, horizontal_index: usize) -> Color {
-        let (r0, g0, b0) = self.base_rgb();
+        let base = self.type_.base_color();
+        let (r0, g0, b0) = match base {
+            Color::Rgb(r, g, b) => (r, g, b),
+            _ => (128, 128, 128),
+        };
         let hsl = Rgb::from(r0 as f32, g0 as f32, b0 as f32).to_hsl();
 
         // Horizontal variation: slight hue shift for odd siblings

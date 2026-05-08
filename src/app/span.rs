@@ -1,3 +1,4 @@
+use ratatui::style::Color;
 use crate::traces::event::TraceData;
 
 pub enum SpanType {
@@ -6,6 +7,19 @@ pub enum SpanType {
     Template,
     Class,
     Task,
+}
+
+impl SpanType {
+    /// Base color for this span type (Catppuccin palette).
+    pub fn base_color(&self) -> Color {
+        match self {
+            SpanType::Unit => Color::Rgb(250, 179, 135),     // Catppuccin Peach
+            SpanType::Source => Color::Rgb(116, 199, 236),   // Catppuccin Sapphire
+            SpanType::Class => Color::Rgb(203, 166, 247),    // Catppuccin Mauve
+            SpanType::Template => Color::Rgb(249, 226, 175), // Catppuccin Yellow
+            SpanType::Task => Color::Rgb(172, 176, 190),     // Catppuccin Subtext0
+        }
+    }
 }
 pub struct Span {
     pub type_: SpanType,
