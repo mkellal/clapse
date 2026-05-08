@@ -23,6 +23,7 @@ impl SpanType {
 }
 pub struct Span {
     pub type_: SpanType,
+    pub identifier: String,
     pub label: String,
     pub details: Option<String>,
     pub start_time: f64,
@@ -48,7 +49,7 @@ pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData) {
             .as_ref()
             .and_then(|a| a.detail.clone())
             .unwrap_or_default();
-        let (type_, label, details): (SpanType, String, Option<String>) = match name.as_str() {
+        let (type_, identifier, details): (SpanType, String, Option<String>) = match name.as_str() {
             "Source" => (
                 SpanType::Source,
                 args_detail.clone(),
@@ -75,6 +76,7 @@ pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData) {
         };
         Some(Span {
             type_,
+            identifier,
             label,
             details,
             start_time: event.ts,

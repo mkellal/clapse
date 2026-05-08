@@ -13,9 +13,9 @@ pub mod unit;
 use self::unit::Unit;
 use crate::app::unit::{FollowingSpanDirection, HorizontalDirection, get_units};
 use crate::cli;
+use crate::widgets::span_details::SpanDetails;
 use crate::widgets::time_range::DurationRange;
 use crate::widgets::unit::UnitWidget;
-use crate::widgets::span_details::SpanDetails;
 
 pub struct App {
     units: Vec<Unit>,
@@ -38,13 +38,17 @@ impl Widget for &mut App {
 
         let scrollbar_height = 2;
         let details_height: u16 = if let Some((ui, si)) = self.selected_indexes {
-            self.units[ui].spans.get(si)
+            self.units[ui]
+                .spans
+                .get(si)
                 .map(|span| SpanDetails { span }.required_height(area.width))
                 .unwrap_or(0)
         } else {
             0
         };
-        let graph_height = area.height.saturating_sub(scrollbar_height + details_height);
+        let graph_height = area
+            .height
+            .saturating_sub(scrollbar_height + details_height);
 
         let scrollbar_area = Rect::new(area.x, area.y, area.width, scrollbar_height);
         let graph_area = Rect::new(area.x, area.y + scrollbar_height, area.width, graph_height);
@@ -135,9 +139,9 @@ impl App {
                 };
                 unit.get_following_span_index(si, horiz, true)
             }
-            FollowingSpanDirection::Parent => {
-                unit.get_parent_span(&unit.spans[si]).map(|s| s.index_in_unit)
-            }
+            FollowingSpanDirection::Parent => unit
+                .get_parent_span(&unit.spans[si])
+                .map(|s| s.index_in_unit),
             FollowingSpanDirection::Child => unit
                 .get_child_spans(&unit.spans[si], true)
                 .into_iter()
@@ -149,12 +153,35 @@ impl App {
         }
     }
 
-    fn zoom_around_center(&mut self, factor: f64) {        let center = self.start_time + self.visible_duration() / 2.0;
+    fn zoom_around_center(&mut self, factor: f64) {
+        let center = self.start_time + self.visible_duration() / 2.0;
         self.zoom = (self.zoom * factor).max(1.0);
         let new_half = self.visible_duration() / 2.0;
         self.start_time = (center - new_half).max(0.0);
         let max_start = (self.total_duration() - self.visible_duration()).max(0.0);
         self.start_time = self.start_time.min(max_start);
+    }
+
+    /// Zoom so the selected span occupies ~60% of the viewport and center on it.
+    fn zoom_to_selected(&mut self) {
+        let (ui, si) = match self.selected_indexes {
+            Some(idx) => idx,
+            None => return,
+        };
+        let span = match self.units[ui].spans.get(si) {
+            Some(s) => s,
+            None => return,
+        };
+        let span_duration = span.duration;
+        let span_center = span.start_time + span_duration / 2.0;
+
+        let new_visible = span_duration / 0.75;
+        let total = self.total_duration();
+        self.zoom = (total / new_visible).max(1.0);
+        let actual_visible = total / self.zoom;
+        self.start_time = (span_center - actual_visible / 2.0)
+            .max(0.0)
+            .min((total - actual_visible).max(0.0));
     }
 
     fn event_loop(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
@@ -216,6 +243,11 @@ impl App {
                         KeyCode::Right => self.move_selection(FollowingSpanDirection::Next),
                         KeyCode::Up => self.move_selection(FollowingSpanDirection::Parent),
                         KeyCode::Down => self.move_selection(FollowingSpanDirection::Child),
+                        KeyCode::Char(' ') if ctrl => {
+                            self.zoom = 1.0;
+                            self.start_time = 0.0;
+                        }
+                        KeyCode::Char(' ') => self.zoom_to_selected(),
                         KeyCode::Esc => self.selected_indexes = None,
                         _ => {}
                     }
