@@ -10,6 +10,8 @@ use crate::widgets::time_range::format_time;
 
 pub struct SpanDetails<'a> {
     pub span: &'a Span,
+    pub parent_duration: Option<f64>,
+    pub total_duration: f64,
 }
 
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
@@ -82,7 +84,10 @@ impl<'a> SpanDetails<'a> {
         } else {
             0
         };
-        let operation_lines = self.span.sublabel.as_deref()
+        let operation_lines = self
+            .span
+            .sublabel
+            .as_deref()
             .map(|d| wrap_text(d, inner_width).len() as u16)
             .unwrap_or(0);
         // 2 borders + 1 row (badge + pills) + label rows + identifier rows + operation rows
@@ -118,7 +123,13 @@ impl<'a> Widget for SpanDetails<'a> {
         let badge = format!(" {} ", span.type_.label());
         let badge_len = badge.chars().count() as u16;
         if x + badge_len <= inner_right {
-            buf.set_stringn(x, y0, &badge, badge_len as usize, Style::default().fg(fg).bg(bg));
+            buf.set_stringn(
+                x,
+                y0,
+                &badge,
+                badge_len as usize,
+                Style::default().fg(fg).bg(bg),
+            );
             x += badge_len + 1;
         }
 
@@ -128,7 +139,10 @@ impl<'a> Widget for SpanDetails<'a> {
             let tag_len = tag.chars().count() as u16;
             if x + tag_len <= inner_right {
                 buf.set_stringn(
-                    x, y0, &tag, tag_len as usize,
+                    x,
+                    y0,
+                    &tag,
+                    tag_len as usize,
                     Style::default()
                         .fg(Color::Rgb(198, 208, 245))
                         .bg(Color::Rgb(51, 54, 74)),
@@ -140,10 +154,19 @@ impl<'a> Widget for SpanDetails<'a> {
         // Time pills
         let start = span.start_time;
         let end = span.start_time + span.duration;
-        let pills = [
-            format!(" ⏱  {} ", format_time(span.duration)),
-            format!(" {} → {} ", format_time(start), format_time(end)),
-        ];
+        let mut pills: Vec<String> = Vec::new();
+        pills.push(format!(" ⏱  {} ", format_time(span.duration)));
+        if let Some(pd) = self.parent_duration {
+            if pd > 0.0 {
+                let pct = span.duration / pd * 100.0;
+                pills.push(format!(" {:.1}% parent ", pct));
+            }
+        }
+        if self.total_duration > 0.0 {
+            let pct = span.duration / self.total_duration * 100.0;
+            pills.push(format!(" {:.3}% total ", pct));
+        }
+        pills.push(format!(" {} → {} ", format_time(start), format_time(end)));
         let pill_style = Style::default()
             .fg(Color::Rgb(198, 208, 245))
             .bg(Color::Rgb(41, 44, 60));
@@ -164,7 +187,10 @@ impl<'a> Widget for SpanDetails<'a> {
                 break;
             }
             buf.set_stringn(
-                inner_x, y, line, inner_width,
+                inner_x,
+                y,
+                line,
+                inner_width,
                 Style::default().add_modifier(Modifier::BOLD),
             );
             y += 1;
@@ -177,7 +203,10 @@ impl<'a> Widget for SpanDetails<'a> {
                     break;
                 }
                 buf.set_stringn(
-                    inner_x, y, &line, inner_width,
+                    inner_x,
+                    y,
+                    &line,
+                    inner_width,
                     Style::default().fg(Color::Rgb(147, 153, 178)),
                 );
                 y += 1;

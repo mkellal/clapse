@@ -17,6 +17,22 @@ use crate::widgets::span_details::SpanDetails;
 use crate::widgets::time_range::DurationRange;
 use crate::widgets::unit::UnitWidget;
 
+/// RAII guard that enables mouse capture on creation and disables it on drop.
+struct MouseCaptureGuard;
+
+impl MouseCaptureGuard {
+    fn enable() -> std::io::Result<Self> {
+        execute!(std::io::stdout(), EnableMouseCapture)?;
+        Ok(Self)
+    }
+}
+
+impl Drop for MouseCaptureGuard {
+    fn drop(&mut self) {
+        let _ = execute!(std::io::stdout(), DisableMouseCapture);
+    }
+}
+
 pub struct App {
     units: Vec<Unit>,
     zoom: f64,
@@ -41,7 +57,12 @@ impl Widget for &mut App {
             self.units[ui]
                 .spans
                 .get(si)
-                .map(|span| SpanDetails { span }.required_height(area.width))
+                .map(|span| {
+                    let parent_duration = span.contained_by_index
+                        .and_then(|pi| self.units[ui].spans.get(pi))
+                        .map(|p| p.duration);
+                    SpanDetails { span, parent_duration, total_duration }.required_height(area.width)
+                })
                 .unwrap_or(0)
         } else {
             0
@@ -82,7 +103,10 @@ impl Widget for &mut App {
 
         if let Some((ui, si)) = self.selected_indexes {
             if let Some(span) = self.units[ui].spans.get(si) {
-                SpanDetails { span }.render(details_area, buf);
+                let parent_duration = span.contained_by_index
+                    .and_then(|pi| self.units[ui].spans.get(pi))
+                    .map(|p| p.duration);
+                SpanDetails { span, parent_duration, total_duration }.render(details_area, buf);
             }
         }
     }
@@ -116,10 +140,8 @@ impl App {
     }
 
     pub fn run(mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
-        execute!(std::io::stdout(), EnableMouseCapture)?;
-        let result = self.event_loop(terminal);
-        execute!(std::io::stdout(), DisableMouseCapture)?;
-        result
+        let _mouse_guard = MouseCaptureGuard::enable()?;
+        self.event_loop(terminal)
     }
 
     fn move_selection(&mut self, direction: FollowingSpanDirection) {
