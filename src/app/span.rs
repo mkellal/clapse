@@ -35,7 +35,11 @@ pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData) {
             .and_then(|a| a.detail.clone())
             .unwrap_or_default();
         let (type_, label, details): (SpanType, String, Option<String>) = match name.as_str() {
-            "Source" => (SpanType::Source, args_detail.clone(), None),
+            "Source" => (
+                SpanType::Source,
+                args_detail.clone(),
+                Some("Inclusion".to_string()),
+            ),
             "ParseClass" => (SpanType::Class, args_detail, Some("Parsing".to_string())),
             "ParseTemplate" => (SpanType::Template, args_detail, Some("Parsing".to_string())),
             "InstantiateClass" => (

@@ -19,7 +19,7 @@ impl<'a> Widget for UnitWidget<'a> {
         }
 
         let time_per_col = self.total_duration / area.width as f64;
-        let mut subcell_tracker: HashMap<(u16, u16), (f64, SubcellAlign, Color)> = HashMap::new();
+        let mut subcell_tracker: HashMap<(u16, u16), (f64, SubcellAlign, Color, usize)> = HashMap::new();
 
         // Per-span core bounds (core_x_start, core_x_end) used to clamp children.
         // A span's children are only rendered if this entry is Some.
@@ -84,14 +84,18 @@ impl<'a> Widget for UnitWidget<'a> {
                 selected_span_index: self.selected_span_index,
             };
 
-            let (was_displayed, span_core_bounds) =
-                widget.render_with_tracker(buf, &mut subcell_tracker);
+            let span_core_bounds = widget.render_with_tracker(buf, &mut subcell_tracker);
 
-            self.spans[i].was_displayed = was_displayed;
             self.spans[i].has_core_cells = span_core_bounds.is_some();
             core_bounds[i] = span_core_bounds;
         }
 
-        flush_subcell_tracker(buf, &subcell_tracker);
+        // Settle subcell claims: only spans that actually won a cell are marked displayed.
+        let subcell_winners = flush_subcell_tracker(buf, &subcell_tracker);
+        for i in 0..self.spans.len() {
+            if self.spans[i].has_core_cells || subcell_winners.contains(&i) {
+                self.spans[i].was_displayed = true;
+            }
+        }
     }
 }

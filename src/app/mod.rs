@@ -14,6 +14,7 @@ use crate::app::unit::{FollowingSpanDirection, HorizontalDirection, get_units};
 use crate::cli;
 use crate::widgets::time_range::DurationRange;
 use crate::widgets::unit::UnitWidget;
+use crate::widgets::span_details::SpanDetails;
 
 pub struct App {
     units: Vec<Unit>,
@@ -33,10 +34,23 @@ impl Widget for &mut App {
         let visible_duration = total_duration / self.zoom;
 
         let scrollbar_height = 2;
-        let graph_height = area.height.saturating_sub(scrollbar_height);
+        let details_height: u16 = if let Some((ui, si)) = self.selected_indexes {
+            self.units[ui].spans.get(si)
+                .map(|span| SpanDetails { span }.required_height(area.width))
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let graph_height = area.height.saturating_sub(scrollbar_height + details_height);
 
         let scrollbar_area = Rect::new(area.x, area.y, area.width, scrollbar_height);
         let graph_area = Rect::new(area.x, area.y + scrollbar_height, area.width, graph_height);
+        let details_area = Rect::new(
+            area.x,
+            area.y + scrollbar_height + graph_height,
+            area.width,
+            details_height,
+        );
 
         let selected_span_index = self.selected_indexes.map(|(_, si)| si);
         let start_time = self.start_time;
@@ -55,6 +69,12 @@ impl Widget for &mut App {
                 start_time,
             }
             .render(graph_area, buf);
+        }
+
+        if let Some((ui, si)) = self.selected_indexes {
+            if let Some(span) = self.units[ui].spans.get(si) {
+                SpanDetails { span }.render(details_area, buf);
+            }
         }
     }
 }
@@ -190,6 +210,7 @@ impl App {
                         KeyCode::Right => self.move_selection(FollowingSpanDirection::Next),
                         KeyCode::Up => self.move_selection(FollowingSpanDirection::Parent),
                         KeyCode::Down => self.move_selection(FollowingSpanDirection::Child),
+                        KeyCode::Esc => self.selected_indexes = None,
                         _ => {}
                     }
                 }

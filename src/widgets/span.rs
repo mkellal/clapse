@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use colors_transform::{Color as _, Hsl, Rgb};
 use ratatui::{
@@ -31,10 +31,10 @@ impl<'a> SpanWidget<'a> {
     pub fn render_with_tracker(
         self,
         buf: &mut Buffer,
-        subcell_tracker: &mut HashMap<(u16, u16), (f64, SubcellAlign, Color)>,
-    ) -> (bool, Option<(u16, u16)>) {
+        subcell_tracker: &mut HashMap<(u16, u16), (f64, SubcellAlign, Color, usize)>,
+    ) -> Option<(u16, u16)> {
         if self.allowed_area.width == 0 {
-            return (false, None);
+            return None;
         }
 
         let span = self.span;
@@ -55,16 +55,17 @@ impl<'a> SpanWidget<'a> {
         let prefrac = 1.0 - startfrac;
         let postfrac = end_float.fract();
 
-        let try_claim = |tracker: &mut HashMap<(u16, u16), (f64, SubcellAlign, Color)>,
+        let span_index = self.span_index;
+        let try_claim = |tracker: &mut HashMap<(u16, u16), (f64, SubcellAlign, Color, usize)>,
                          col: i32,
                          fraction: f64,
                          align: SubcellAlign| {
             let x = fa.x as i32 + col;
             if x >= fa.x as i32 && x < fa.right() as i32 {
                 let coord = (x as u16, y);
-                let current = tracker.get(&coord).map(|(f, _, _)| *f).unwrap_or(0.0);
+                let current = tracker.get(&coord).map(|(f, _, _, _)| *f).unwrap_or(0.0);
                 if fraction > current {
-                    tracker.insert(coord, (fraction, align, bg_color));
+                    tracker.insert(coord, (fraction, align, bg_color, span_index));
                 }
             }
         };
@@ -77,7 +78,7 @@ impl<'a> SpanWidget<'a> {
                 SubcellAlign::Left
             };
             try_claim(subcell_tracker, start_col, exact, align);
-            return (true, None);
+            return None;
         }
 
         if prefrac < 1.0 {
@@ -125,7 +126,7 @@ impl<'a> SpanWidget<'a> {
             try_claim(subcell_tracker, end_col, postfrac, SubcellAlign::Left);
         }
 
-        (true, core_bounds)
+        core_bounds
     }
 }
 
@@ -137,11 +138,15 @@ impl<'a> Widget for SpanWidget<'a> {
     }
 }
 
+/// Flush the subcell tracker into the buffer and return the set of span indices
+/// that actually won at least one subcell.
 pub fn flush_subcell_tracker(
     buf: &mut Buffer,
-    tracker: &HashMap<(u16, u16), (f64, SubcellAlign, Color)>,
-) {
-    for ((x, y), (fraction, align, color)) in tracker {
+    tracker: &HashMap<(u16, u16), (f64, SubcellAlign, Color, usize)>,
+) -> HashSet<usize> {
+    let mut winners = HashSet::new();
+    for ((x, y), (fraction, align, color, span_index)) in tracker {
+        winners.insert(*span_index);
         let partial_char = if matches!(align, SubcellAlign::Right) {
             if *fraction < 0.25 {
                 "▕"
@@ -173,6 +178,7 @@ pub fn flush_subcell_tracker(
             cell.set_fg(*color);
         }
     }
+    winners
 }
 
 impl Span {

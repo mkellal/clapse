@@ -32,7 +32,7 @@ pub fn tick_interval(visible_duration: f64) -> f64 {
     nice * magnitude
 }
 
-fn format_time(us: f64) -> String {
+pub fn format_time(us: f64) -> String {
     // if us >= 1_000_000.0 {
     //     format!("{:.2}s", us / 1_000_000.0)
     // } else
