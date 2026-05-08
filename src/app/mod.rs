@@ -6,6 +6,7 @@ use ratatui::DefaultTerminal;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
+use std::collections::HashMap;
 
 pub mod span;
 pub mod unit;
@@ -21,6 +22,8 @@ pub struct App {
     zoom: f64,
     start_time: f64,
     selected_indexes: Option<(usize, usize)>, // (unit index, span index)
+    /// Maps terminal cell (col, row) → span index within unit 0. Rebuilt every frame.
+    cell_span_map: HashMap<(u16, u16), usize>,
 }
 
 impl Widget for &mut App {
@@ -62,11 +65,13 @@ impl Widget for &mut App {
         scrollbar.render(scrollbar_area, buf);
 
         if let Some(unit) = self.units.first_mut() {
+            self.cell_span_map.clear();
             UnitWidget {
                 spans: &mut unit.spans,
                 selected_span_index,
                 total_duration: visible_duration,
                 start_time,
+                cell_map: &mut self.cell_span_map,
             }
             .render(graph_area, buf);
         }
@@ -88,6 +93,7 @@ impl Default for App {
             zoom: 1.0,
             start_time: 0.0,
             selected_indexes: None,
+            cell_span_map: HashMap::new(),
         }
     }
 }
@@ -215,6 +221,12 @@ impl App {
                     }
                 }
                 Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::Down(_) => {
+                        let coord = (mouse.column, mouse.row);
+                        if let Some(&si) = self.cell_span_map.get(&coord) {
+                            self.selected_indexes = Some((0, si));
+                        }
+                    }
                     MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => {
                         let step = self.visible_duration() * 0.1;
                         self.start_time = (self.start_time - step).max(0.0);

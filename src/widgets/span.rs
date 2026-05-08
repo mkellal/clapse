@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use colors_transform::{Color as _, Hsl, Rgb};
 use ratatui::{
@@ -138,15 +138,15 @@ impl<'a> Widget for SpanWidget<'a> {
     }
 }
 
-/// Flush the subcell tracker into the buffer and return the set of span indices
-/// that actually won at least one subcell.
+/// Flush the subcell tracker into the buffer and return a map of cell coordinates
+/// to the span index that won that cell.
 pub fn flush_subcell_tracker(
     buf: &mut Buffer,
     tracker: &HashMap<(u16, u16), (f64, SubcellAlign, Color, usize)>,
-) -> HashSet<usize> {
-    let mut winners = HashSet::new();
+) -> HashMap<(u16, u16), usize> {
+    let mut winners: HashMap<(u16, u16), usize> = HashMap::new();
     for ((x, y), (fraction, align, color, span_index)) in tracker {
-        winners.insert(*span_index);
+        winners.insert((*x, *y), *span_index);
         let partial_char = if matches!(align, SubcellAlign::Right) {
             if *fraction < 0.25 {
                 "▕"
