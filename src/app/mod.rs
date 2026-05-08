@@ -1,5 +1,7 @@
 use clap::Parser;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseEventKind};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::execute;
 use ratatui::DefaultTerminal;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -10,8 +12,8 @@ pub mod unit;
 use self::unit::Unit;
 use crate::app::unit::get_units;
 use crate::cli;
-use crate::widgets::duration_range::{tick_interval, DurationRange};
 use crate::widgets::flame_graph::Flamegraph;
+use crate::widgets::time_range::DurationRange;
 
 pub struct App {
     units: Vec<Unit>,
@@ -21,7 +23,12 @@ pub struct App {
 
 impl Widget for &mut App {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let total_duration = self.units.first().map(|u| u.total_duration).unwrap_or(0.0);
+        let total_duration = self
+            .units
+            .first()
+            .and_then(|u| u.spans.first())
+            .map(|s| s.duration)
+            .unwrap_or(0.0);
         let visible_duration = total_duration / self.zoom;
 
         let scrollbar_height = 2;
@@ -64,7 +71,11 @@ impl Default for App {
 
 impl App {
     fn total_duration(&self) -> f64 {
-        self.units.first().map(|u| u.total_duration).unwrap_or(0.0)
+        self.units
+            .first()
+            .and_then(|u| u.spans.first())
+            .map(|s| s.duration)
+            .unwrap_or(0.0)
     }
 
     fn visible_duration(&self) -> f64 {
@@ -72,44 +83,91 @@ impl App {
     }
 
     pub fn run(mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+        execute!(std::io::stdout(), EnableMouseCapture)?;
+        let result = self.event_loop(terminal);
+        execute!(std::io::stdout(), DisableMouseCapture)?;
+        result
+    }
+
+    fn zoom_around_center(&mut self, factor: f64) {
+        let center = self.start_time + self.visible_duration() / 2.0;
+        self.zoom = (self.zoom * factor).max(1.0);
+        let new_half = self.visible_duration() / 2.0;
+        self.start_time = (center - new_half).max(0.0);
+        let max_start = (self.total_duration() - self.visible_duration()).max(0.0);
+        self.start_time = self.start_time.min(max_start);
+    }
+
+    fn event_loop(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         loop {
-            terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
+            let app = &mut *self;
+            terminal.draw(|frame| frame.render_widget(&mut *app, frame.area()))?;
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    let ctrl = key
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::CONTROL);
+                    let shift = key
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::SHIFT);
+                    // Ctrl+Up/Down = precise zoom (×1.1), Ctrl+PageUp/PageDown = fast zoom (×2)
+                    // Ctrl+Shift+Left/Right = precise pan (5%), Ctrl+Left/Right = fast pan (25%)
+                    let pan_factor = if shift { 0.05 } else { 0.25 };
                     match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
-                        KeyCode::Char('+') | KeyCode::Char('=') => {
-                            let center = self.start_time + self.visible_duration() / 2.0;
-                            self.zoom *= 1.25;
-                            let new_half = self.visible_duration() / 2.0;
-                            self.start_time = (center - new_half).max(0.0);
-                            let max_start = (self.total_duration() - self.visible_duration()).max(0.0);
-                            self.start_time = self.start_time.min(max_start);
+                        KeyCode::Char('q') => break Ok(()),
+                        KeyCode::Char('c') if ctrl => {
+                            break Ok(());
                         }
-                        KeyCode::Char('-') => {
-                            self.zoom /= 1.25;
+                        // Ctrl+Up/Down = precise zoom
+                        KeyCode::Up if ctrl => {
+                            self.zoom_around_center(1.1);
+                        }
+                        KeyCode::Down if ctrl => {
+                            self.zoom_around_center(1.0 / 1.1);
                             if self.zoom < 1.0 {
                                 self.zoom = 1.0;
                                 self.start_time = 0.0;
-                            } else {
-                                let max_start = (self.total_duration() - self.visible_duration()).max(0.0);
-                                self.start_time = self.start_time.min(max_start);
                             }
                         }
-                        KeyCode::Left => {
-                            let interval = tick_interval(self.visible_duration());
-                            let k = (self.start_time / interval).round() as i64;
-                            self.start_time = ((k - 1) as f64 * interval).max(0.0);
+                        // PageUp/PageDown = fast zoom
+                        KeyCode::PageUp => {
+                            self.zoom_around_center(2.0);
                         }
-                        KeyCode::Right => {
-                            let interval = tick_interval(self.visible_duration());
-                            let k = (self.start_time / interval).round() as i64;
-                            let max_start = (self.total_duration() - self.visible_duration()).max(0.0);
-                            self.start_time = ((k + 1) as f64 * interval).min(max_start);
+                        KeyCode::PageDown => {
+                            self.zoom_around_center(0.5);
+                            if self.zoom < 1.0 {
+                                self.zoom = 1.0;
+                                self.start_time = 0.0;
+                            }
+                        }
+                        // Ctrl+Left/Right = pan
+                        KeyCode::Left if ctrl => {
+                            let step = self.visible_duration() * pan_factor;
+                            self.start_time = (self.start_time - step).max(0.0);
+                        }
+                        KeyCode::Right if ctrl => {
+                            let step = self.visible_duration() * pan_factor;
+                            let max_start =
+                                (self.total_duration() - self.visible_duration()).max(0.0);
+                            self.start_time = (self.start_time + step).min(max_start);
                         }
                         _ => {}
                     }
                 }
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => {
+                        let step = self.visible_duration() * 0.1;
+                        self.start_time = (self.start_time - step).max(0.0);
+                    }
+                    // Plain scroll down / right → pan forward
+                    MouseEventKind::ScrollDown | MouseEventKind::ScrollRight => {
+                        let step = self.visible_duration() * 0.1;
+                        let max_start = (self.total_duration() - self.visible_duration()).max(0.0);
+                        self.start_time = (self.start_time + step).min(max_start);
+                    }
+                    _ => {}
+                },
+                _ => {}
             }
         }
     }

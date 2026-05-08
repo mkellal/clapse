@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::traces::event::parse_trace_file;
 
 pub enum SpanType {
+    Unit,
     Source,
     Template,
     Class,
@@ -20,65 +21,64 @@ pub struct Span {
     pub depth: usize,
 }
 
-pub fn get_spans(trace_file: &PathBuf) -> Vec<Span> {
-    let data = parse_trace_file(&trace_file);
-    if data.is_none() {
-        return Vec::new();
-    }
-    let data = data.unwrap();
-    let mut spans: Vec<Span> = data
-        .trace_events
-        .into_iter()
-        .filter_map(|event| {
-            if event.ph == "X" {
-                let name = event.name.clone().unwrap_or_default();
-                let args_detail = event.args.unwrap_or_default().detail.unwrap_or_default();
-                let (type_, label, details): (SpanType, String, Option<String>) =
-                    match name.as_str() {
-                        "Source" => (SpanType::Source, args_detail, None),
-                        "ParseClass" => (SpanType::Class, args_detail, Some("Parsing".to_string())),
-                        "ParseTemplate" => {
-                            (SpanType::Template, args_detail, Some("Parsing".to_string()))
-                        }
-                        "InstantiateClass" => (
-                            SpanType::Class,
-                            args_detail,
-                            Some("Instantiation".to_string()),
-                        ),
-                        "InstantiateTemplate" => (
-                            SpanType::Template,
-                            args_detail,
-                            Some("Instantiation".to_string()),
-                        ),
-                        "Frontend"
-                        | "Backend"
-                        | "PerformPendingInstantiations"
-                        | "CodeGen Function"
-                        | "DebugType" => (SpanType::Task, name, Some(args_detail)),
-                        _ => return None,
-                    };
-                Some(Span {
-                    type_,
-                    label,
-                    details,
-                    start_time: event.ts,
-                    duration: event.dur.unwrap_or(0.0),
-                    contains_indices: Vec::new(),
-                    contained_by_index: None,
-                    thread_id: event.tid,
-                    depth: 0,
-                })
-            } else {
-                None
-            }
+/// Parses `trace_file`, appends the resulting spans to `spans` (which must
+/// already contain the root Unit span at index 0), then links everything and
+/// sets the root span's duration/start_time from its children's actual bounds.
+pub fn add_spans(spans: &mut Vec<Span>, trace_file: &PathBuf) {
+    let data = match parse_trace_file(trace_file) {
+        Some(d) => d,
+        None => return,
+    };
+
+    spans.extend(data.trace_events.into_iter().filter_map(|event| {
+        if event.ph != "X" {
+            return None;
+        }
+        let name = event.name.clone().unwrap_or_default();
+        let args_detail = event.args.unwrap_or_default().detail.unwrap_or_default();
+        let (type_, label, details): (SpanType, String, Option<String>) =
+            match name.as_str() {
+                "Source" => (SpanType::Source, args_detail, None),
+                "ParseClass" => (SpanType::Class, args_detail, Some("Parsing".to_string())),
+                "ParseTemplate" => {
+                    (SpanType::Template, args_detail, Some("Parsing".to_string()))
+                }
+                "InstantiateClass" => (
+                    SpanType::Class,
+                    args_detail,
+                    Some("Instantiation".to_string()),
+                ),
+                "InstantiateTemplate" => (
+                    SpanType::Template,
+                    args_detail,
+                    Some("Instantiation".to_string()),
+                ),
+                "Frontend"
+                | "Backend"
+                | "PerformPendingInstantiations"
+                | "CodeGen Function"
+                | "DebugType" => (SpanType::Task, name, Some(args_detail)),
+                _ => return None,
+            };
+        Some(Span {
+            type_,
+            label,
+            details,
+            start_time: event.ts,
+            duration: event.dur.unwrap_or(0.0),
+            contains_indices: Vec::new(),
+            contained_by_index: None,
+            thread_id: event.tid,
+            depth: 0,
         })
-        .collect();
-    link_spans(&mut spans);
-    spans
+    }));
+
+    link_spans(spans);
 }
 
 fn link_spans(spans: &mut Vec<Span>) {
-    spans.sort_unstable_by(|a, b| {
+    // Sort everything after index 0 (the root Unit span stays at the front)
+    spans[1..].sort_unstable_by(|a, b| {
         a.start_time
             .partial_cmp(&b.start_time)
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -89,26 +89,53 @@ fn link_spans(spans: &mut Vec<Span>) {
             })
     });
 
-    let mut active_parents: Vec<usize> = Vec::with_capacity(32);
+    // Reset linkage on all child spans (root at 0 is already clean)
+    for span in spans[1..].iter_mut() {
+        span.contained_by_index = None;
+        span.contains_indices.clear();
+        span.depth = 0;
+    }
 
-    for i in 0..spans.len() {
+    // active_parents starts with the root span so every top-level span is
+    // linked as a child of it automatically.
+    let mut active_parents: Vec<usize> = vec![0];
+
+    for i in 1..spans.len() {
         let current_start = spans[i].start_time;
 
-        while let Some(&top_idx) = active_parents.last() {
+        // Pop parents whose window has closed, but never pop the root (index 0)
+        while active_parents.len() > 1 {
+            let top_idx = *active_parents.last().unwrap();
             let top_end = spans[top_idx].start_time + spans[top_idx].duration;
-
             if top_end > current_start + f64::EPSILON {
                 break;
             }
             active_parents.pop();
         }
 
-        if let Some(&parent_idx) = active_parents.last() {
-            spans[i].contained_by_index = Some(parent_idx);
-            spans[parent_idx].contains_indices.push(i);
-            spans[i].depth = active_parents.len();
-        }
+        let parent_idx = *active_parents.last().unwrap();
+        spans[i].contained_by_index = Some(parent_idx);
+        spans[parent_idx].contains_indices.push(i);
+        spans[i].depth = active_parents.len(); // root is depth 0, its children depth 1, etc.
 
         active_parents.push(i);
+    }
+
+    // Finalise root span bounds from its direct children
+    if spans.len() > 1 {
+        let min_start = spans[1..]
+            .iter()
+            .filter(|s| s.contained_by_index == Some(0))
+            .map(|s| s.start_time)
+            .fold(f64::INFINITY, f64::min);
+        let max_end = spans[1..]
+            .iter()
+            .filter(|s| s.contained_by_index == Some(0))
+            .map(|s| s.start_time + s.duration)
+            .fold(f64::NEG_INFINITY, f64::max);
+        if min_start.is_finite() && max_end.is_finite() {
+            spans[0].start_time = min_start;
+            spans[0].duration = max_end - min_start;
+        }
     }
 }

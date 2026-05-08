@@ -89,6 +89,9 @@ impl Span {
     /// Returns the base RGB color for this span type
     fn base_rgb(&self) -> (u8, u8, u8) {
         match self.type_ {
+            // Catppuccin Teal (muted pastel teal)
+            SpanType::Unit => (148, 196, 190),
+
             // Catppuccin Sapphire (Soft Pastel Blue)
             SpanType::Source => (116, 199, 236),
 
