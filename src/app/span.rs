@@ -17,6 +17,10 @@ pub struct Span {
     pub contains_indices: Vec<usize>,
     pub index_in_unit: usize,
     pub depth: usize,
+    /// Set after each render: true if this span occupied at least one full terminal cell.
+    pub has_core_cells: bool,
+    /// Set after each render: true if this span was rendered at all (including partial chars).
+    pub was_displayed: bool,
 }
 
 pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData) {
@@ -61,6 +65,8 @@ pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData) {
             contained_by_index: None,
             index_in_unit: 0,
             depth: 0,
+            has_core_cells: false,
+            was_displayed: false,
         })
     }));
 

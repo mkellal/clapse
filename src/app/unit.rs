@@ -18,41 +18,48 @@ pub struct Unit {
 pub enum FollowingSpanDirection {
     Next,
     Previous,
+    Parent,
+    Child,
+}
+
+/// Horizontal-only direction used by `get_following_span_index`.
+#[derive(Clone, Copy)]
+pub enum HorizontalDirection {
+    Next,
+    Previous,
 }
 
 impl Unit {
-    pub fn get_span(&self, span_index: usize) -> Option<&Span> {
-        self.spans.get(span_index)
-    }
-
     pub fn get_parent_span(&self, span: &Span) -> Option<&Span> {
         span.contained_by_index
             .and_then(|parent_index| self.spans.get(parent_index))
     }
 
-    pub fn get_child_spans(&self, span: &Span) -> Vec<&Span> {
+    pub fn get_child_spans(&self, span: &Span, only_displayed: bool) -> Vec<&Span> {
         span.contains_indices
             .iter()
             .filter_map(|&child_index| self.spans.get(child_index))
+            .filter(|s| !only_displayed || s.was_displayed)
             .collect()
     }
 
     pub fn get_following_span_index(
         &self,
         span_index: usize,
-        direction: FollowingSpanDirection,
+        direction: HorizontalDirection,
+        only_displayed: bool,
     ) -> Option<usize> {
         // get sibling spans (those with the same parent) and find the one immediately after `span`.
         let span = self.spans.get(span_index)?;
         let parent_index = span.contained_by_index?;
         let parent = self.spans.get(parent_index)?;
-        let siblings = self.get_child_spans(parent);
+        let siblings = self.get_child_spans(parent, only_displayed);
         let pos = siblings
             .iter()
             .position(|&s| s.index_in_unit == span_index)?;
         let shift = match direction {
-            FollowingSpanDirection::Next => 1,
-            FollowingSpanDirection::Previous => -1,
+            HorizontalDirection::Next => 1,
+            HorizontalDirection::Previous => -1,
         };
         let new_pos = (pos as isize + shift) as usize;
         let subsequent = siblings.get(new_pos).copied();
@@ -63,7 +70,7 @@ impl Unit {
                 if parent.contained_by_index.is_none() {
                     None
                 } else {
-                    self.get_following_span_index(parent_index, direction)
+                    self.get_following_span_index(parent_index, direction, only_displayed)
                 }
             }
         }
@@ -92,6 +99,8 @@ pub fn get_units(build_dir: &std::path::PathBuf) -> Vec<Unit> {
                 contains_indices: Vec::new(),
                 index_in_unit: 0,
                 depth: 0,
+                has_core_cells: false,
+                was_displayed: false,
             }];
 
             let data = match parse_trace_file(trace_file) {

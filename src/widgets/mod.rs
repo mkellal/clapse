@@ -1,3 +1,3 @@
 pub mod time_range;
-pub mod flame_graph;
-mod graph_span;
+pub mod unit;
+pub mod span;

@@ -10,10 +10,10 @@ use ratatui::widgets::Widget;
 pub mod span;
 pub mod unit;
 use self::unit::Unit;
-use crate::app::unit::{FollowingSpanDirection, get_units};
+use crate::app::unit::{FollowingSpanDirection, HorizontalDirection, get_units};
 use crate::cli;
-use crate::widgets::flame_graph::Flamegraph;
 use crate::widgets::time_range::DurationRange;
+use crate::widgets::unit::UnitWidget;
 
 pub struct App {
     units: Vec<Unit>,
@@ -38,16 +38,8 @@ impl Widget for &mut App {
         let scrollbar_area = Rect::new(area.x, area.y, area.width, scrollbar_height);
         let graph_area = Rect::new(area.x, area.y + scrollbar_height, area.width, graph_height);
 
-        let flamegraph = Flamegraph {
-            spans: self
-                .units
-                .first()
-                .map(|u| u.spans.as_slice())
-                .unwrap_or(&[]),
-            selected_span_index: self.selected_indexes.map(|(_, si)| si),
-            total_duration: visible_duration,
-            start_time: self.start_time,
-        };
+        let selected_span_index = self.selected_indexes.map(|(_, si)| si);
+        let start_time = self.start_time;
         let scrollbar = DurationRange {
             total_duration,
             start: self.start_time,
@@ -55,7 +47,15 @@ impl Widget for &mut App {
         };
         scrollbar.render(scrollbar_area, buf);
 
-        flamegraph.render(graph_area, buf);
+        if let Some(unit) = self.units.first_mut() {
+            UnitWidget {
+                spans: &mut unit.spans,
+                selected_span_index,
+                total_duration: visible_duration,
+                start_time,
+            }
+            .render(graph_area, buf);
+        }
     }
 }
 
@@ -92,8 +92,38 @@ impl App {
         result
     }
 
-    fn zoom_around_center(&mut self, factor: f64) {
-        let center = self.start_time + self.visible_duration() / 2.0;
+    fn move_selection(&mut self, direction: FollowingSpanDirection) {
+        let (ui, si) = match self.selected_indexes {
+            Some(idx) => idx,
+            None => {
+                self.selected_indexes = Some((0, 0));
+                return;
+            }
+        };
+        let unit = &self.units[ui];
+        let new_si = match direction {
+            FollowingSpanDirection::Next | FollowingSpanDirection::Previous => {
+                let horiz = match direction {
+                    FollowingSpanDirection::Next => HorizontalDirection::Next,
+                    _ => HorizontalDirection::Previous,
+                };
+                unit.get_following_span_index(si, horiz, true)
+            }
+            FollowingSpanDirection::Parent => {
+                unit.get_parent_span(&unit.spans[si]).map(|s| s.index_in_unit)
+            }
+            FollowingSpanDirection::Child => unit
+                .get_child_spans(&unit.spans[si], true)
+                .into_iter()
+                .next()
+                .map(|s| s.index_in_unit),
+        };
+        if let Some(next_si) = new_si {
+            self.selected_indexes = Some((ui, next_si));
+        }
+    }
+
+    fn zoom_around_center(&mut self, factor: f64) {        let center = self.start_time + self.visible_duration() / 2.0;
         self.zoom = (self.zoom * factor).max(1.0);
         let new_half = self.visible_duration() / 2.0;
         self.start_time = (center - new_half).max(0.0);
@@ -156,67 +186,10 @@ impl App {
                         }
 
                         // span selection
-                        KeyCode::Left => {
-                            let (unit_index, span_index) = match self.selected_indexes {
-                                Some((ui, si)) => {
-                                    let unit = &self.units[ui];
-                                    let previous = unit.get_following_span_index(
-                                        si,
-                                        FollowingSpanDirection::Previous,
-                                    );
-                                    match previous {
-                                        Some(prev_index) => (ui, prev_index),
-                                        None => (ui, si),
-                                    }
-                                }
-                                None => (0, 0),
-                            };
-                            self.selected_indexes = Some((unit_index, span_index));
-                        }
-                        KeyCode::Right => {
-                            let (unit_index, span_index) = match self.selected_indexes {
-                                Some((ui, si)) => {
-                                    let unit = &self.units[ui];
-                                    let next = unit
-                                        .get_following_span_index(si, FollowingSpanDirection::Next);
-                                    match next {
-                                        Some(next_index) => (ui, next_index),
-                                        None => (ui, si),
-                                    }
-                                }
-                                None => (0, 0),
-                            };
-                            self.selected_indexes = Some((unit_index, span_index));
-                        }
-                        KeyCode::Up => {
-                            let (unit_index, span_index) = match self.selected_indexes {
-                                Some((ui, si)) => {
-                                    let unit = &self.units[ui];
-                                    let parent = unit.get_parent_span(&unit.spans[si]);
-                                    match parent {
-                                        Some(parent_span) => (ui, parent_span.index_in_unit),
-                                        None => (ui, si),
-                                    }
-                                }
-                                None => (0, 0),
-                            };
-                            self.selected_indexes = Some((unit_index, span_index));
-                        }
-                        KeyCode::Down => {
-                            let (unit_index, span_index) = match self.selected_indexes {
-                                Some((ui, si)) => {
-                                    let unit = &self.units[ui];
-                                    let children = unit.get_child_spans(&unit.spans[si]);
-                                    if let Some(first_child) = children.first() {
-                                        (ui, first_child.index_in_unit)
-                                    } else {
-                                        (ui, si)
-                                    }
-                                }
-                                None => (0, 0),
-                            };
-                            self.selected_indexes = Some((unit_index, span_index));
-                        }
+                        KeyCode::Left => self.move_selection(FollowingSpanDirection::Previous),
+                        KeyCode::Right => self.move_selection(FollowingSpanDirection::Next),
+                        KeyCode::Up => self.move_selection(FollowingSpanDirection::Parent),
+                        KeyCode::Down => self.move_selection(FollowingSpanDirection::Child),
                         _ => {}
                     }
                 }
