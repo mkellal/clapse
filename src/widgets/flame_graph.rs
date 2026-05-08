@@ -10,6 +10,7 @@ use crate::{
 pub struct Flamegraph<'a> {
     pub spans: &'a [Span],
     pub total_duration: f64,
+    pub start_time: f64,
 }
 
 impl<'a> Widget for Flamegraph<'a> {
@@ -21,14 +22,15 @@ impl<'a> Widget for Flamegraph<'a> {
             spans: self.spans,
             time_per_col,
             flamegraph_area: area,
+            start_time: self.start_time,
         };
 
         for (i, span) in self.spans.iter().enumerate() {
             if span.contained_by_index.is_some() {
                 continue;
             }
-            let sf = span.start_time / time_per_col;
-            let ef = (span.start_time + span.duration) / time_per_col;
+            let sf = (span.start_time - self.start_time) / time_per_col;
+            let ef = (span.start_time + span.duration - self.start_time) / time_per_col;
             let x_start = (area.x as i32 + sf.round() as i32)
                 .max(area.x as i32)
                 .min(area.right() as i32) as u16;

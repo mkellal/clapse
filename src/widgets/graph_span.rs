@@ -14,6 +14,7 @@ pub struct GraphSpan<'a> {
     pub spans: &'a [Span],
     pub time_per_col: f64,
     pub flamegraph_area: Rect,
+    pub start_time: f64,
 }
 
 impl<'a> GraphSpan<'a> {
@@ -34,8 +35,8 @@ impl<'a> GraphSpan<'a> {
         let bg_color = span.get_checkerboard_color(sibling_index);
         let fa = self.flamegraph_area;
 
-        let start_float = span.start_time / self.time_per_col;
-        let end_float = (span.start_time + span.duration) / self.time_per_col;
+        let start_float = (span.start_time - self.start_time) / self.time_per_col;
+        let end_float = (span.start_time + span.duration - self.start_time) / self.time_per_col;
         let start_col = start_float.floor() as i32;
         let end_col = end_float.floor() as i32;
         let startfrac = start_float.fract();
@@ -109,8 +110,8 @@ impl<'a> GraphSpan<'a> {
             if child_y < fa.bottom() {
                 for (sibling_i, &child_idx) in span.contains_indices.iter().enumerate() {
                     let child = &self.spans[child_idx];
-                    let cs = child.start_time / self.time_per_col;
-                    let ce = (child.start_time + child.duration) / self.time_per_col;
+                    let cs = (child.start_time - self.start_time) / self.time_per_col;
+                    let ce = (child.start_time + child.duration - self.start_time) / self.time_per_col;
                     let cx_start = (fa.x as i32 + cs.round() as i32)
                         .max(core_rect.x as i32)
                         .min(core_rect.right() as i32) as u16;
