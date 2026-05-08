@@ -25,7 +25,7 @@ pub struct Span {
     pub type_: SpanType,
     pub identifier: String,
     pub label: String,
-    pub details: Option<String>,
+    pub sublabel: Option<String>,
     pub start_time: f64,
     pub duration: f64,
     pub contained_by_index: Option<usize>,
@@ -49,7 +49,7 @@ pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData) {
             .as_ref()
             .and_then(|a| a.detail.clone())
             .unwrap_or_default();
-        let (type_, identifier, details): (SpanType, String, Option<String>) = match name.as_str() {
+        let (type_, identifier, operation): (SpanType, String, Option<String>) = match name.as_str() {
             "Source" => (
                 SpanType::Source,
                 args_detail.clone(),
@@ -74,11 +74,14 @@ pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData) {
             | "DebugType" => (SpanType::Task, name, Some(args_detail.clone())),
             _ => return None,
         };
+
+        let label = identifier.clone();
+
         Some(Span {
             type_,
             identifier,
             label,
-            details,
+            sublabel: operation,
             start_time: event.ts,
             duration: event.dur.unwrap_or(0.0),
             contains_indices: Vec::new(),

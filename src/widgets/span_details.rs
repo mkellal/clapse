@@ -20,6 +20,21 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let mut current = String::new();
     for word in text.split_whitespace() {
         if current.is_empty() {
+            // Word longer than width: hard-wrap it.
+            if word.chars().count() > width {
+                let mut chunk = String::new();
+                for c in word.chars() {
+                    if chunk.chars().count() == width {
+                        lines.push(chunk.clone());
+                        chunk.clear();
+                    }
+                    chunk.push(c);
+                }
+                if !chunk.is_empty() {
+                    current = chunk;
+                }
+                continue;
+            }
             current.push_str(word);
         } else if current.chars().count() + 1 + word.chars().count() <= width {
             current.push(' ');
@@ -62,11 +77,16 @@ impl<'a> SpanDetails<'a> {
         }
         let inner_width = (area_width - 2) as usize;
         let label_lines = wrap_text(&self.span.label, inner_width).len() as u16;
-        let detail_lines = self.span.details.as_deref()
+        let identifier_lines = if self.span.identifier != self.span.label {
+            wrap_text(&self.span.identifier, inner_width).len() as u16
+        } else {
+            0
+        };
+        let operation_lines = self.span.sublabel.as_deref()
             .map(|d| wrap_text(d, inner_width).len() as u16)
             .unwrap_or(0);
-        // 2 borders + 1 row (badge + pills) + label rows + detail rows
-        2 + 1 + label_lines + detail_lines
+        // 2 borders + 1 row (badge + pills) + label rows + identifier rows + operation rows
+        2 + label_lines + identifier_lines + operation_lines
     }
 }
 
@@ -102,7 +122,22 @@ impl<'a> Widget for SpanDetails<'a> {
             x += badge_len + 1;
         }
 
-        // start/end relative to unit start
+        // Operation tag (e.g. "Parsing", "Instantiation")
+        if let Some(op) = &span.sublabel {
+            let tag = format!(" {} ", op);
+            let tag_len = tag.chars().count() as u16;
+            if x + tag_len <= inner_right {
+                buf.set_stringn(
+                    x, y0, &tag, tag_len as usize,
+                    Style::default()
+                        .fg(Color::Rgb(198, 208, 245))
+                        .bg(Color::Rgb(51, 54, 74)),
+                );
+                x += tag_len + 1;
+            }
+        }
+
+        // Time pills
         let start = span.start_time;
         let end = span.start_time + span.duration;
         let pills = [
@@ -135,15 +170,15 @@ impl<'a> Widget for SpanDetails<'a> {
             y += 1;
         }
 
-        // ── Details (wrapped, muted) ─────────────────────────────────────────
-        if let Some(details) = &span.details {
-            for line in wrap_text(details, inner_width) {
+        // ── Full identifier (wrapped, muted) — only when different from label ─
+        if span.identifier != span.label {
+            for line in wrap_text(&span.identifier, inner_width) {
                 if y >= area.bottom().saturating_sub(1) {
                     break;
                 }
                 buf.set_stringn(
                     inner_x, y, &line, inner_width,
-                    Style::default().fg(Color::Rgb(108, 112, 134)),
+                    Style::default().fg(Color::Rgb(147, 153, 178)),
                 );
                 y += 1;
             }

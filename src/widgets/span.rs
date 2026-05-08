@@ -10,6 +10,76 @@ use ratatui::{
 
 use crate::app::span::Span;
 
+/// Splits `label` into `(section_text, following_delimiter)` pairs.
+/// Delimiters are `::` and `/`.
+fn split_sections(label: &str) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+    let mut remaining = label;
+    loop {
+        let slash = remaining.find('/').map(|p| (p, 1usize));
+        let colons = remaining.find("::").map(|p| (p, 2usize));
+        let next = match (slash, colons) {
+            (Some(s), Some(c)) => Some(if s.0 <= c.0 { s } else { c }),
+            (Some(s), None) => Some(s),
+            (None, Some(c)) => Some(c),
+            (None, None) => None,
+        };
+        match next {
+            Some((pos, len)) => {
+                result.push((
+                    remaining[..pos].to_string(),
+                    remaining[pos..pos + len].to_string(),
+                ));
+                remaining = &remaining[pos + len..];
+            }
+            None => {
+                result.push((remaining.to_string(), String::new()));
+                break;
+            }
+        }
+    }
+    result
+}
+
+/// Shorten `label` to fit in `w` characters.
+///
+/// Removes leading sections (delimited by `::` or `/`) from the front until
+/// the remainder fits, replacing the last removed section with as many of its
+/// characters as possible followed by `…`.
+fn shorten_label(label: &str, w: usize) -> String {
+    if label.chars().count() <= w {
+        return label.to_string();
+    }
+    if w == 0 {
+        return String::new();
+    }
+
+    let sections = split_sections(label);
+
+    if sections.len() == 1 {
+        return label.chars().take(w.saturating_sub(1)).collect::<String>() + "…";
+    }
+
+    for remove_up_to in 1..=sections.len() {
+        let suffix: String = sections[remove_up_to..]
+            .iter()
+            .flat_map(|(s, d)| [s.as_str(), d.as_str()])
+            .collect();
+        let last_removed = &sections[remove_up_to - 1];
+        let connector = &last_removed.1;
+        // Minimum: "…" + connector + suffix (zero prefix characters)
+        let min_len = 1 + connector.chars().count() + suffix.chars().count();
+        if min_len <= w {
+            let available = w - min_len;
+            let prefix: String = last_removed.0.chars().take(available).collect();
+            return format!("{}…{}{}", prefix, connector, suffix);
+        }
+    }
+
+    // Unreachable: when remove_up_to == sections.len(), min_len == 1 <= w
+    "…".to_string()
+}
+
 #[derive(Clone, Copy)]
 pub enum SubcellAlign {
     Left,
@@ -103,13 +173,10 @@ impl<'a> SpanWidget<'a> {
             buf.set_style(core_rect, Style::default().bg(bg_color));
 
             let w = core_width as usize;
-            let label_len = span.label.chars().count();
             let display_text = if w == 1 {
                 "𝅏".to_string()
-            } else if label_len > w {
-                span.label.chars().take(w - 1).collect::<String>() + "…"
             } else {
-                span.label.clone()
+                shorten_label(&span.label, w)
             };
             let mut text_style = Style::default().fg(fg_color).bg(bg_color);
             if is_selected {

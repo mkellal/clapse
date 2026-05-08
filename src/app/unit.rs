@@ -1,4 +1,5 @@
 use rayon::prelude::*;
+use std::path::Path;
 
 use crate::{
     app::span::{Span, SpanType, add_spans},
@@ -7,6 +8,70 @@ use crate::{
         file::{clean_trace_file_path, get_trace_files},
     },
 };
+
+const MAX_LABEL_LEN: usize = 30;
+
+/// Shorten a raw span identifier for display only when it exceeds MAX_LABEL_LEN.
+/// - File paths: strip build dir prefix for local files; for system paths
+///   detect std/boost and prefix with `[std]` / `[boost]` + filename.
+/// - C++ names: collapse template argument lists with `<…>` only if too long.
+fn clean_identifier(identifier: &str, build_dir: &Path) -> String {
+    if identifier.starts_with('/') {
+        return clean_path_label(identifier, build_dir);
+    }
+    if identifier.chars().count() <= MAX_LABEL_LEN {
+        return identifier.to_owned();
+    }
+    collapse_template_args(identifier)
+}
+
+fn clean_path_label(path: &str, build_dir: &Path) -> String {
+    let p = Path::new(path);
+    // Project-local: strip build dir prefix.
+    if let Ok(rel) = p.strip_prefix(build_dir) {
+        let s = rel.to_string_lossy().into_owned();
+        if s.chars().count() <= MAX_LABEL_LEN {
+            return s;
+        }
+        // Still too long: keep the last 4 components.
+        return last_n_components(rel, 4);
+    }
+    // System / third-party path: keep last 4 components, prefix with lib tag.
+    let short = last_n_components(p, 4);
+    short
+}
+
+fn last_n_components(p: &Path, n: usize) -> String {
+    let components: Vec<_> = p.components().collect();
+    let start = components.len().saturating_sub(n);
+    components[start..]
+        .iter()
+        .collect::<std::path::PathBuf>()
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Collapse every `<…>` template argument list (including nested ones) to `<…>`.
+fn collapse_template_args(s: &str) -> String {
+    let mut result = String::new();
+    let mut depth = 0usize;
+    for c in s.chars() {
+        match c {
+            '<' => {
+                if depth == 0 {
+                    result.push_str("<…>");
+                }
+                depth += 1;
+            }
+            '>' => {
+                depth = depth.saturating_sub(1);
+            }
+            _ if depth == 0 => result.push(c),
+            _ => {}
+        }
+    }
+    result
+}
 
 pub struct Unit {
     pub name: String,
@@ -86,13 +151,14 @@ pub fn get_units(build_dir: &std::path::PathBuf) -> Vec<Unit> {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-
+            let trace_file_str = trace_file.to_string_lossy().to_string();
             // Seed the vec with the root Unit span; add_spans will populate the
             // rest and finalise the root's start_time / duration.
             let mut spans = vec![Span {
                 type_: SpanType::Unit,
+                identifier: trace_file_str.clone(),
                 label: name.clone(),
-                details: Some(trace_file.to_string_lossy().to_string()),
+                sublabel: Some("Translation Unit".to_string()),
                 start_time: 0.0,
                 duration: f64::INFINITY,
                 contained_by_index: None,
@@ -108,6 +174,11 @@ pub fn get_units(build_dir: &std::path::PathBuf) -> Vec<Unit> {
                 None => return None,
             };
             add_spans(&mut spans, &data);
+
+            // Replace the default label (raw identifier clone) with the cleaned display label.
+            for span in spans[1..].iter_mut() {
+                span.label = clean_identifier(&span.identifier, build_dir);
+            }
 
             Some(Unit {
                 name,
