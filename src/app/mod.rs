@@ -15,7 +15,7 @@ use crate::app::unit::{FollowingSpanDirection, HorizontalDirection, OrderBy, get
 use crate::cli;
 use crate::widgets::span_details::SpanDetails;
 use crate::widgets::time_range::DurationRange;
-use crate::widgets::unit::UnitWidget;
+use crate::widgets::track::{TrackWidget, UnitEntry};
 
 /// RAII guard that enables mouse capture on creation and disables it on drop.
 struct MouseCaptureGuard;
@@ -38,8 +38,8 @@ pub struct App {
     zoom: f64,
     start_time: f64,
     selected_indexes: Option<(usize, usize)>, // (unit index, span index)
-    /// Maps terminal cell (col, row) → span index within unit 0. Rebuilt every frame.
-    cell_span_map: HashMap<(u16, u16), usize>,
+    /// Maps terminal cell (col, row) → (unit_index, span_index). Rebuilt every frame.
+    cell_span_map: HashMap<(u16, u16), (usize, usize)>,
     order_by: OrderBy,
 }
 
@@ -96,10 +96,13 @@ impl Widget for &mut App {
                 OrderBy::StartTime => unit.views_by_start_time.as_slice(),
                 OrderBy::Duration => unit.views_by_duration.as_slice(),
             };
-            UnitWidget {
-                spans: &mut unit.spans,
-                views,
-                selected_span_index,
+            TrackWidget {
+                label: Some("Thread 0"),
+                units: vec![UnitEntry {
+                    spans: &mut unit.spans,
+                    views,
+                    selected_span_index,
+                }],
                 total_duration: visible_duration,
                 start_time,
                 cell_map: &mut self.cell_span_map,
@@ -300,8 +303,8 @@ impl App {
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::Down(_) => {
                         let coord = (mouse.column, mouse.row);
-                        if let Some(&si) = self.cell_span_map.get(&coord) {
-                            self.selected_indexes = Some((0, si));
+                        if let Some(&(ui, si)) = self.cell_span_map.get(&coord) {
+                            self.selected_indexes = Some((ui, si));
                         }
                     }
                     MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => {

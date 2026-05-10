@@ -90,7 +90,7 @@ pub struct SpanWidget<'a> {
     pub span: &'a Span,
     pub span_index: usize,
     pub index_in_parent: usize,
-    pub flamegraph_area: Rect,
+    pub display_area: Rect,
     pub allowed_area: Rect,
     pub time_per_col: f64,
     pub start_time: f64,
@@ -118,7 +118,7 @@ impl<'a> SpanWidget<'a> {
         } else {
             span.get_checkerboard_color(self.index_in_parent)
         };
-        let fa = self.flamegraph_area;
+        let area = self.display_area;
 
         let start_float = (self.effective_start - self.start_time) / self.time_per_col;
         let end_float = (self.effective_start + span.duration - self.start_time) / self.time_per_col;
@@ -133,8 +133,8 @@ impl<'a> SpanWidget<'a> {
                          col: i32,
                          fraction: f64,
                          align: SubcellAlign| {
-            let x = fa.x as i32 + col;
-            if x >= fa.x as i32 && x < fa.right() as i32 {
+            let x = area.x as i32 + col;
+            if x >= area.x as i32 && x < area.right() as i32 {
                 let coord = (x as u16, y);
                 let current = tracker.get(&coord).map(|(f, _, _, _)| *f).unwrap_or(0.0);
                 if fraction > current {
@@ -158,10 +158,10 @@ impl<'a> SpanWidget<'a> {
             try_claim(subcell_tracker, start_col, prefrac, SubcellAlign::Right);
         }
 
-        let core_x_start = (fa.x as i32 + start_float.ceil() as i32)
+        let core_x_start = (area.x as i32 + start_float.ceil() as i32)
             .max(self.allowed_area.x as i32)
             .min(self.allowed_area.right() as i32) as u16;
-        let core_x_end = (fa.x as i32 + end_float.floor() as i32)
+        let core_x_end = (area.x as i32 + end_float.floor() as i32)
             .max(self.allowed_area.x as i32)
             .min(self.allowed_area.right() as i32) as u16;
         let core_width = core_x_end.saturating_sub(core_x_start);

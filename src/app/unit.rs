@@ -10,7 +10,7 @@ use crate::{
 };
 
 // ---------------------------------------------------------------------------
-// OrderBy + SpanEntry
+// OrderBy + SpanView
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -241,7 +241,7 @@ pub fn parse_ninja_log(path: &Path) -> Option<Vec<UnitTrace>> {
 pub fn get_units(build_dir: &std::path::PathBuf) -> Vec<Unit> {
     // Parse the ninja log once before the parallel section so every thread
     // can look up timings without re-reading the file.
-    let ninja_log_path = build_dir.join(".ninja_logss");
+    let ninja_log_path = build_dir.join(".ninja_log");
     let ninja_traces: Vec<UnitTrace> = parse_ninja_log(&ninja_log_path).unwrap_or_default();
 
     let trace_files = get_trace_files(build_dir);

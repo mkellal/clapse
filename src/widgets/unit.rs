@@ -12,8 +12,9 @@ pub struct UnitWidget<'a> {
     pub selected_span_index: Option<usize>,
     pub total_duration: f64,
     pub start_time: f64,
-    // terminal cell (col, row) -> span index.
-    pub cell_map: &'a mut HashMap<(u16, u16), usize>,
+    pub unit_index: usize,
+    // terminal cell (col, row) -> (unit_index, span_index).
+    pub cell_map: &'a mut HashMap<(u16, u16), (usize, usize)>,
 }
 
 impl<'a> Widget for UnitWidget<'a> {
@@ -72,7 +73,7 @@ impl<'a> Widget for UnitWidget<'a> {
                 span,
                 span_index: i,
                 index_in_parent: entry.index_in_parent,
-                flamegraph_area: area,
+                display_area: area,
                 allowed_area,
                 time_per_col,
                 start_time: self.start_time,
@@ -84,7 +85,7 @@ impl<'a> Widget for UnitWidget<'a> {
 
             if let Some((cx_start, cx_end)) = span_core_bounds {
                 for x in cx_start..cx_end {
-                    self.cell_map.insert((x, y), i);
+                    self.cell_map.insert((x, y), (self.unit_index, i));
                 }
             }
             self.spans[i].has_core_cells = span_core_bounds.is_some();
@@ -98,6 +99,8 @@ impl<'a> Widget for UnitWidget<'a> {
                 self.spans[i].was_displayed = true;
             }
         }
-        self.cell_map.extend(subcell_winners);
+        let ui = self.unit_index;
+        self.cell_map
+            .extend(subcell_winners.into_iter().map(|(k, si)| (k, (ui, si))));
     }
 }
