@@ -10,8 +10,8 @@ pub struct TraceEvent {
     pub ts: f64,    // Timestamp
     pub pid: u32,
     pub tid: u32,
-    pub dur: Option<f64>,        // Duration for complete events
-    pub args: Option<Args>,      // Extra data varies wildly
+    pub dur: Option<f64>,   // Duration for complete events
+    pub args: Option<Args>, // Extra data varies wildly
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,9 +43,7 @@ pub fn parse_trace_file(path: &PathBuf) -> Option<TraceData> {
     };
 
     match serde_json::from_slice::<TraceData>(&bytes) {
-        Ok(data) => {
-            Some(data)
-        }
+        Ok(data) => Some(data),
         Err(e) => {
             eprintln!("Failed to parse {:?}: {}", path, e);
             return None;

@@ -87,12 +87,7 @@ pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData, build_dir: &std::path:
                 | "Backend"
                 | "PerformPendingInstantiations"
                 | "CodeGen Function"
-                | "DebugType" => (
-                    SpanType::Task,
-                    args_detail.clone(),
-                    name,
-                    None,
-                ),
+                | "DebugType" => (SpanType::Task, args_detail.clone(), name, None),
                 _ => return None,
             };
 

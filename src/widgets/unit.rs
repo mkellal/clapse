@@ -71,7 +71,11 @@ impl<'a> Widget for UnitWidget<'a> {
 
             // Spans above the viewport (due to row_skip): propagate bounds but don't render.
             if (depth as u16) < self.row_skip {
-                core_bounds[i] = if width > 0 { Some((x_start, x_end)) } else { None };
+                core_bounds[i] = if width > 0 {
+                    Some((x_start, x_end))
+                } else {
+                    None
+                };
                 continue;
             }
 

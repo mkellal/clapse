@@ -36,7 +36,7 @@ pub fn format_time(us: f64) -> String {
     // if us >= 1_000_000.0 {
     //     format!("{:.2}s", us / 1_000_000.0)
     // } else
-     if us >= 1_000.0 {
+    if us >= 1_000.0 {
         format!("{:.1}ms", us / 1_000.0)
     } else {
         format!("{:.0}µs", us)
@@ -104,7 +104,7 @@ impl Widget for DurationRange {
         for x in thumb_start..thumb_end {
             if let Some(cell) = buf.cell_mut((area.x + x, scroll_y)) {
                 cell.set_symbol("▀");
-                cell.set_fg(Color::White);
+                cell.set_fg(Color::Cyan);
             }
         }
 
@@ -112,7 +112,7 @@ impl Widget for DurationRange {
             let x = thumb_start.min(area.width.saturating_sub(1));
             if let Some(cell) = buf.cell_mut((area.x + x, scroll_y)) {
                 cell.set_symbol("▀");
-                cell.set_fg(Color::White);
+                cell.set_fg(Color::Cyan);
             }
         }
     }

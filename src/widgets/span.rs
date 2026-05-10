@@ -121,7 +121,8 @@ impl<'a> SpanWidget<'a> {
         let area = self.display_area;
 
         let start_float = (self.effective_start - self.start_time) / self.time_per_col;
-        let end_float = (self.effective_start + span.duration - self.start_time) / self.time_per_col;
+        let end_float =
+            (self.effective_start + span.duration - self.start_time) / self.time_per_col;
         let start_col = start_float.floor() as i32;
         let end_col = end_float.floor() as i32;
         let startfrac = start_float.fract();

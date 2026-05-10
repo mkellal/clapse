@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 pub fn get_trace_files(build_dir: &PathBuf) -> Vec<PathBuf> {
     let pattern = format!("{}/**/*.*.json", build_dir.display());
-    // let pattern = format!("{}/**/irods_configuration_parser.cpp.json", build_dir.display());   
+    // let pattern = format!("{}/**/irods_configuration_parser.cpp.json", build_dir.display());
     let paths: Vec<PathBuf> = match glob(&pattern) {
         Ok(entries) => entries
             .filter_map(|entry| match entry {

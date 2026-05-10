@@ -101,10 +101,18 @@ impl<'a> Widget for SpanDetails<'a> {
             return;
         }
 
+        // Clear every cell in the overlay area so the flamegraph behind is hidden.
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                buf[(x, y)].reset();
+            }
+        }
+
         let border_style = Style::default().fg(Color::Rgb(88, 91, 112));
         Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
+            .style(Style::default())
             .render(area, buf);
 
         let inner_x = area.x + 1;

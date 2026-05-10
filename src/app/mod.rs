@@ -5,6 +5,7 @@ use crossterm::execute;
 use ratatui::DefaultTerminal;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
 use std::collections::HashMap;
 
@@ -52,10 +53,16 @@ pub struct App {
     viewport_height: u16,
     /// Measured width of the graph viewport from the last render.
     viewport_width: u16,
+    /// Total virtual height of all tracks from the last render.
+    content_height: u16,
 }
 
 impl Widget for &mut App {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
         let total_duration = self
             .units
             .iter()
@@ -86,16 +93,17 @@ impl Widget for &mut App {
         } else {
             0
         };
-        let graph_height = area
-            .height
-            .saturating_sub(scrollbar_height + details_height);
+        let graph_height = area.height.saturating_sub(scrollbar_height);
+        let vertical_scrollbar_width: u16 = if area.width > 1 { 1 } else { 0 };
+        let graph_width = area.width.saturating_sub(vertical_scrollbar_width);
 
         let scrollbar_area = Rect::new(area.x, area.y, area.width, scrollbar_height);
-        let details_area = Rect::new(
-            area.x,
-            area.y + scrollbar_height + graph_height,
-            area.width,
-            details_height,
+        let graph_area = Rect::new(area.x, area.y + scrollbar_height, graph_width, graph_height);
+        let vscrollbar_area = Rect::new(
+            area.x + graph_width,
+            area.y + scrollbar_height,
+            vertical_scrollbar_width,
+            graph_height,
         );
 
         let start_time = self.start_time;
@@ -107,7 +115,6 @@ impl Widget for &mut App {
         scrollbar.render(scrollbar_area, buf);
 
         self.cell_span_map.clear();
-        let graph_area = Rect::new(area.x, area.y + scrollbar_height, area.width, graph_height);
         self.viewport_height = graph_height;
         self.viewport_width = graph_area.width;
         let order_by = self.order_by;
@@ -159,6 +166,11 @@ impl Widget for &mut App {
                 }
             })
             .collect();
+
+        self.content_height = FlamegraphWidget::total_height(&track_inputs);
+        let max_scroll = self.content_height.saturating_sub(graph_area.height);
+        self.vertical_scroll = self.vertical_scroll.min(max_scroll);
+
         FlamegraphWidget {
             tracks: track_inputs,
             total_duration: visible_duration,
@@ -168,12 +180,56 @@ impl Widget for &mut App {
         }
         .render(graph_area, buf);
 
+        if vscrollbar_area.width > 0 && vscrollbar_area.height > 0 {
+            let muted_style = Style::default().fg(Color::DarkGray);
+            let active_style = Style::default().fg(Color::Cyan);
+
+            for y in vscrollbar_area.y..vscrollbar_area.bottom() {
+                buf.set_string(vscrollbar_area.x, y, "│", muted_style);
+            }
+
+            let thumb_height = if self.content_height <= vscrollbar_area.height {
+                vscrollbar_area.height
+            } else {
+                (((vscrollbar_area.height as u32) * (vscrollbar_area.height as u32)
+                    + self.content_height as u32
+                    - 1)
+                    / self.content_height as u32) as u16
+            }
+            .clamp(1, vscrollbar_area.height);
+
+            let thumb_start = if max_scroll == 0 {
+                0
+            } else {
+                let max_thumb_start = vscrollbar_area.height.saturating_sub(thumb_height) as u32;
+                ((self.vertical_scroll as u32) * max_thumb_start / max_scroll as u32) as u16
+            };
+
+            for y in 0..thumb_height {
+                buf.set_string(
+                    vscrollbar_area.x,
+                    vscrollbar_area.y + thumb_start + y,
+                    "┃",
+                    active_style,
+                );
+            }
+        }
+
         if let Some((ui, si)) = self.selected_indexes {
             if let Some(span) = self.units[ui].spans.get(si) {
                 let parent_duration = span
                     .parent_index
                     .and_then(|pi| self.units[ui].spans.get(pi))
                     .map(|p| p.duration);
+                let overlay_height = details_height.min(graph_area.height);
+                let details_area = Rect::new(
+                    graph_area.x,
+                    graph_area
+                        .y
+                        .saturating_add(graph_area.height.saturating_sub(overlay_height)),
+                    graph_area.width,
+                    overlay_height,
+                );
                 SpanDetails {
                     span,
                     parent_duration,
@@ -215,6 +271,7 @@ impl Default for App {
             vertical_scroll: 0,
             viewport_height: 0,
             viewport_width: 0,
+            content_height: 0,
         }
     }
 }
@@ -552,10 +609,14 @@ impl App {
                         }
                     }
                     MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => {
-                        self.vertical_scroll = self.vertical_scroll.saturating_sub(3);
+                        let max_scroll = self.content_height.saturating_sub(self.viewport_height);
+                        self.vertical_scroll =
+                            self.vertical_scroll.saturating_sub(3).min(max_scroll);
                     }
                     MouseEventKind::ScrollDown | MouseEventKind::ScrollRight => {
-                        self.vertical_scroll = self.vertical_scroll.saturating_add(3);
+                        let max_scroll = self.content_height.saturating_sub(self.viewport_height);
+                        self.vertical_scroll =
+                            self.vertical_scroll.saturating_add(3).min(max_scroll);
                     }
                     _ => {}
                 },
