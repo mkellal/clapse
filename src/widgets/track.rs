@@ -12,10 +12,10 @@ use crate::app::unit::{SpanView, Unit};
 
 use super::unit::UnitWidget;
 
-/// Returns the number of content rows needed to display the units in `thread_units`:
-/// `max(span.depth) + 1` across all spans in the thread (minimum 1).
-pub fn thread_content_height(thread_units: &[usize], units: &[Unit]) -> u16 {
-    thread_units
+/// Returns the number of content rows needed to display the units in `track_units`:
+/// `max(span.depth) + 1` across all spans in the track (minimum 1).
+pub fn track_content_height(track_units: &[usize], units: &[Unit]) -> u16 {
+    track_units
         .iter()
         .filter_map(|&ui| units.get(ui))
         .flat_map(|u| u.spans.iter())
@@ -35,7 +35,7 @@ pub struct UnitEntry<'a> {
     pub selected_span_index: Option<usize>,
 }
 
-/// A track represents a thread in unit scheduling.
+/// A track represents a track in unit scheduling.
 ///
 /// It optionally shows a muted label on its first row, then renders each unit
 /// using [`UnitWidget`] across the remaining area.
@@ -55,14 +55,31 @@ impl<'a> Widget for TrackWidget<'a> {
         }
 
         let content_area = if let Some(label) = self.label {
-            let label_area = Rect::new(area.x, area.y, area.width, 1);
+            let y = area.y;
+            let muted = Style::default().fg(Color::DarkGray);
+            // "─ Label ─────────────────"
+            // Left padding: one mid-line char + space before the label.
+            let prefix = "─ ";
+            let suffix_char = '─';
+            let label_with_space = format!("{} ", label);
+            let prefix_len = prefix.chars().count() as u16;
+            let label_len = label_with_space.chars().count() as u16;
+            let used = prefix_len + label_len;
+            let suffix_len = area.width.saturating_sub(used);
+
+            buf.set_string(area.x, y, prefix, muted);
             buf.set_stringn(
-                label_area.x,
-                label_area.y,
-                label,
-                label_area.width as usize,
-                Style::default().fg(Color::DarkGray),
+                area.x + prefix_len,
+                y,
+                &label_with_space,
+                label_len as usize,
+                muted,
             );
+            let suffix: String = std::iter::repeat(suffix_char)
+                .take(suffix_len as usize)
+                .collect();
+            buf.set_string(area.x + prefix_len + label_len, y, &suffix, muted);
+
             Rect::new(area.x, area.y + 1, area.width, area.height.saturating_sub(1))
         } else {
             area

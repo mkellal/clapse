@@ -15,7 +15,7 @@ use crate::app::unit::{FollowingSpanDirection, HorizontalDirection, OrderBy, get
 use crate::cli;
 use crate::widgets::span_details::SpanDetails;
 use crate::widgets::time_range::DurationRange;
-use crate::widgets::track::{TrackWidget, UnitEntry, thread_content_height};
+use crate::widgets::track::{TrackWidget, UnitEntry, track_content_height};
 
 /// RAII guard that enables mouse capture on creation and disables it on drop.
 struct MouseCaptureGuard;
@@ -35,8 +35,8 @@ impl Drop for MouseCaptureGuard {
 
 pub struct App {
     units: Vec<Unit>,
-    /// Thread schedule: each entry is a list of unit indices (into `units`).
-    threads: Vec<Vec<usize>>,
+    /// Track schedule: each entry is a list of unit indices (into `units`).
+    tracks: Vec<Vec<usize>>,
     zoom: f64,
     start_time: f64,
     selected_indexes: Option<(usize, usize)>, // (unit index, span index)
@@ -74,13 +74,13 @@ impl Widget for &mut App {
         let graph_height = area
             .height
             .saturating_sub(scrollbar_height + details_height);
-        let num_tracks = self.threads.len().max(1) as u16;
+        let num_tracks = self.tracks.len().max(1) as u16;
         // Compute the intrinsic height of each track (content rows + label row).
         let label_height: u16 = 1;
         let track_heights: Vec<u16> = self
-            .threads
+            .tracks
             .iter()
-            .map(|t| thread_content_height(t, &self.units) + label_height)
+            .map(|t| track_content_height(t, &self.units) + label_height)
             .collect();
         let total_tracks_height: u16 = track_heights.iter().copied().sum();
         // Scale down uniformly if tracks don't fit the available graph area.
@@ -109,7 +109,7 @@ impl Widget for &mut App {
 
         self.cell_span_map.clear();
         let mut track_y = area.y + scrollbar_height;
-        for (track_idx, thread_units) in self.threads.iter().enumerate() {
+        for (track_idx, track_units) in self.tracks.iter().enumerate() {
             let intrinsic = *track_heights.get(track_idx).unwrap_or(&1);
             let this_height = ((intrinsic as f64 * scale).round() as u16).max(1);
             // Clamp so we don't exceed the graph area.
@@ -121,7 +121,7 @@ impl Widget for &mut App {
             let track_area = Rect::new(area.x, track_y, area.width, this_height);
             let label = format!("Thread {}", track_idx);
             let order_by = self.order_by;
-            let units_entries: Vec<UnitEntry> = thread_units
+            let units_entries: Vec<UnitEntry> = track_units
                 .iter()
                 .filter_map(|&ui| {
                     let unit = self.units.get_mut(ui)?;
@@ -173,10 +173,10 @@ impl Default for App {
     fn default() -> Self {
         let cli = cli::Cli::parse();
         let units: Vec<Unit> = get_units(&cli.build_dir);
-        let threads = schedule_units(&units);
+        let tracks = schedule_units(&units);
         Self {
             units,
-            threads,
+            tracks,
             zoom: 1.0,
             start_time: 0.0,
             selected_indexes: None,
@@ -189,10 +189,11 @@ impl Default for App {
 impl App {
     fn total_duration(&self) -> f64 {
         self.units
-            .first()
-            .and_then(|u| u.spans.first())
-            .map(|s| s.duration)
-            .unwrap_or(0.0)
+            .iter()
+            .filter_map(|u| u.spans.first())
+            .filter(|r| r.duration.is_finite())
+            .map(|r| r.start_time + r.duration)
+            .fold(0.0f64, f64::max)
     }
 
     fn visible_duration(&self) -> f64 {
@@ -212,29 +213,108 @@ impl App {
                 return;
             }
         };
-        let unit = &self.units[ui];
-        let views = unit.views(self.order_by);
-        let new_si = match direction {
+        match direction {
             FollowingSpanDirection::Next | FollowingSpanDirection::Previous => {
                 let horiz = match direction {
                     FollowingSpanDirection::Next => HorizontalDirection::Next,
                     _ => HorizontalDirection::Previous,
                 };
-                unit.get_following_span_index(si, horiz, views)
+                let is_root = self.units[ui].spans[si].parent_index.is_none();
+                if is_root {
+                    // Move between visible unit roots within the same track.
+                    if let Some((ti, _)) = self.track_of_unit(ui) {
+                        let visible: Vec<usize> = self.tracks[ti]
+                            .iter()
+                            .copied()
+                            .filter(|&idx| {
+                                self.units[idx]
+                                    .spans
+                                    .first()
+                                    .map(|s| s.was_displayed)
+                                    .unwrap_or(false)
+                            })
+                            .collect();
+                        if let Some(pos) = visible.iter().position(|&idx| idx == ui) {
+                            let shift: isize = match horiz {
+                                HorizontalDirection::Next => 1,
+                                HorizontalDirection::Previous => -1,
+                            };
+                            let new_pos = (pos as isize + shift) as usize;
+                            if let Some(&new_ui) = visible.get(new_pos) {
+                                self.selected_indexes = Some((new_ui, 0));
+                            }
+                        }
+                    }
+                } else {
+                    let unit = &self.units[ui];
+                    let views = unit.views(self.order_by);
+                    if let Some(new_si) = unit.get_following_span_index(si, horiz, views) {
+                        self.selected_indexes = Some((ui, new_si));
+                    }
+                }
             }
-            FollowingSpanDirection::Parent => unit
-                .get_parent_span(&unit.spans[si])
-                .map(|s| s.index_in_unit),
-            FollowingSpanDirection::Child => views
+            FollowingSpanDirection::Parent => {
+                let unit = &self.units[ui];
+                if let Some(new_si) = unit.get_parent_span(&unit.spans[si]).map(|s| s.index_in_unit) {
+                    self.selected_indexes = Some((ui, new_si));
+                }
+            }
+            FollowingSpanDirection::Child => {
+                let unit = &self.units[ui];
+                let views = unit.views(self.order_by);
+                if let Some(new_si) = views
+                    .iter()
+                    .find(|e| {
+                        unit.spans[e.span_index].parent_index == Some(si)
+                            && unit.spans[e.span_index].was_displayed
+                    })
+                    .map(|e| e.span_index)
+                {
+                    self.selected_indexes = Some((ui, new_si));
+                }
+            }
+        }
+    }
+
+    /// Returns `(track_index, position_in_track)` for the given unit index.
+    fn track_of_unit(&self, unit_index: usize) -> Option<(usize, usize)> {
+        self.tracks.iter().enumerate().find_map(|(ti, units)| {
+            units
                 .iter()
-                .find(|e| {
-                    unit.spans[e.span_index].parent_index == Some(si)
-                        && unit.spans[e.span_index].was_displayed
-                })
-                .map(|e| e.span_index),
+                .position(|&ui| ui == unit_index)
+                .map(|pos| (ti, pos))
+        })
+    }
+
+    /// Move the selection to the first unit root of the next/previous track.
+    fn switch_track(&mut self, dir: HorizontalDirection) {
+        if self.tracks.is_empty() {
+            return;
+        }
+        let current_ti = self
+            .selected_indexes
+            .and_then(|(ui, _)| self.track_of_unit(ui))
+            .map(|(ti, _)| ti)
+            .unwrap_or(0);
+        let n = self.tracks.len();
+        let new_ti = match dir {
+            HorizontalDirection::Next => (current_ti + 1) % n,
+            HorizontalDirection::Previous => (current_ti + n - 1) % n,
         };
-        if let Some(next_si) = new_si {
-            self.selected_indexes = Some((ui, next_si));
+        // First visible unit in the target track.
+        let first_visible = self.tracks[new_ti]
+            .iter()
+            .copied()
+            .find(|&idx| {
+                self.units[idx]
+                    .spans
+                    .first()
+                    .map(|s| s.was_displayed)
+                    .unwrap_or(false)
+            })
+            .or_else(|| self.tracks[new_ti].first().copied());
+        if let Some(new_ui) = first_visible {
+            self.selected_indexes = Some((new_ui, 0));
         }
     }
 
@@ -341,6 +421,8 @@ impl App {
                         }
                         KeyCode::Char(' ') => self.zoom_to_selected(),
                         KeyCode::Esc => self.selected_indexes = None,
+                        KeyCode::Tab => self.switch_track(HorizontalDirection::Next),
+                        KeyCode::BackTab => self.switch_track(HorizontalDirection::Previous),
                         KeyCode::Char('s') => {
                             self.order_by = match self.order_by {
                                 OrderBy::StartTime => OrderBy::Duration,
