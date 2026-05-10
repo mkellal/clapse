@@ -1,5 +1,7 @@
-use ratatui::style::Color;
+use std::path::Path;
+
 use crate::traces::event::TraceData;
+use ratatui::style::Color;
 
 pub enum SpanType {
     Unit,
@@ -13,11 +15,11 @@ impl SpanType {
     /// Base color for this span type (Catppuccin palette).
     pub fn base_color(&self) -> Color {
         match self {
-            SpanType::Unit => Color::Rgb(250, 179, 135),     // Catppuccin Peach
-            SpanType::Source => Color::Rgb(116, 199, 236),   // Catppuccin Sapphire
-            SpanType::Class => Color::Rgb(203, 166, 247),    // Catppuccin Mauve
+            SpanType::Unit => Color::Rgb(250, 179, 135), // Catppuccin Peach
+            SpanType::Source => Color::Rgb(116, 199, 236), // Catppuccin Sapphire
+            SpanType::Class => Color::Rgb(203, 166, 247), // Catppuccin Mauve
             SpanType::Template => Color::Rgb(249, 226, 175), // Catppuccin Yellow
-            SpanType::Task => Color::Rgb(172, 176, 190),     // Catppuccin Subtext0
+            SpanType::Task => Color::Rgb(172, 176, 190), // Catppuccin Subtext0
         }
     }
 }
@@ -38,7 +40,7 @@ pub struct Span {
     pub was_displayed: bool,
 }
 
-pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData) {
+pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData, build_dir: &std::path::PathBuf) {
     spans.extend(data.trace_events.iter().filter_map(|event| {
         if event.ph != "X" {
             return None;
@@ -49,39 +51,56 @@ pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData) {
             .as_ref()
             .and_then(|a| a.detail.clone())
             .unwrap_or_default();
-        let (type_, identifier, operation): (SpanType, String, Option<String>) = match name.as_str() {
-            "Source" => (
-                SpanType::Source,
-                args_detail.clone(),
-                Some("Inclusion".to_string()),
-            ),
-            "ParseClass" => (SpanType::Class, args_detail, Some("Parsing".to_string())),
-            "ParseTemplate" => (SpanType::Template, args_detail, Some("Parsing".to_string())),
-            "InstantiateClass" => (
-                SpanType::Class,
-                args_detail,
-                Some("Instantiation".to_string()),
-            ),
-            "InstantiateTemplate" => (
-                SpanType::Template,
-                args_detail,
-                Some("Instantiation".to_string()),
-            ),
-            "Frontend"
-            | "Backend"
-            | "PerformPendingInstantiations"
-            | "CodeGen Function"
-            | "DebugType" => (SpanType::Task, name, Some(args_detail.clone())),
-            _ => return None,
-        };
-
-        let label = identifier.clone();
+        let (type_, identifier, label, sublabel): (SpanType, String, String, Option<String>) =
+            match name.as_str() {
+                "Source" => (
+                    SpanType::Source,
+                    args_detail.clone(),
+                    clean_identifier(&args_detail, build_dir),
+                    Some("Inclusion".to_string()),
+                ),
+                "ParseClass" => (
+                    SpanType::Class,
+                    args_detail.clone(),
+                    clean_identifier(&args_detail, build_dir),
+                    Some("Parsing".to_string()),
+                ),
+                "ParseTemplate" => (
+                    SpanType::Template,
+                    args_detail.clone(),
+                    clean_identifier(&args_detail, build_dir),
+                    Some("Parsing".to_string()),
+                ),
+                "InstantiateClass" => (
+                    SpanType::Class,
+                    args_detail.clone(),
+                    clean_identifier(&args_detail, build_dir),
+                    Some("Instantiation".to_string()),
+                ),
+                "InstantiateTemplate" => (
+                    SpanType::Template,
+                    args_detail.clone(),
+                    clean_identifier(&args_detail, build_dir),
+                    Some("Instantiation".to_string()),
+                ),
+                "Frontend"
+                | "Backend"
+                | "PerformPendingInstantiations"
+                | "CodeGen Function"
+                | "DebugType" => (
+                    SpanType::Task,
+                    args_detail.clone(),
+                    name,
+                    None,
+                ),
+                _ => return None,
+            };
 
         Some(Span {
             type_,
             identifier,
             label,
-            sublabel: operation,
+            sublabel,
             start_time: event.ts,
             duration: event.dur.unwrap_or(0.0),
             children_indices: Vec::new(),
@@ -142,7 +161,7 @@ fn link_spans(spans: &mut Vec<Span>) {
         active_parents.push(i);
     }
 
-    if spans.len() > 1 {
+    if spans.len() > 1 && spans[0].duration == f64::INFINITY {
         // Finalise root span bounds from its direct children
         let min_start = spans[1..]
             .iter()
@@ -158,6 +177,71 @@ fn link_spans(spans: &mut Vec<Span>) {
             spans[0].start_time = min_start;
             spans[0].duration = max_end - min_start;
         }
-        // set
     }
+
+    // When we have a ninja-derived start time, child span timestamps
+    // are relative to the trace start (~0 µs) while the root is at
+    // `unit_start` (build-relative µs).  Shift all non-root spans so
+    // every span lives in the same coordinate system.
+    let unit_start = spans.first().map(|s| s.start_time).unwrap_or(0.0);
+    for span in spans[1..].iter_mut() {
+        if unit_start != 0.0 {
+            span.start_time += unit_start;
+        }
+    }
+}
+
+const MAX_LABEL_LEN: usize = 30;
+
+fn clean_identifier(identifier: &str, build_dir: &Path) -> String {
+    if identifier.starts_with('/') {
+        return clean_path_label(identifier, build_dir);
+    }
+    if identifier.chars().count() <= MAX_LABEL_LEN {
+        return identifier.to_owned();
+    }
+    collapse_template_args(identifier)
+}
+
+fn clean_path_label(path: &str, build_dir: &Path) -> String {
+    let p = Path::new(path);
+    if let Ok(rel) = p.strip_prefix(build_dir) {
+        let s = rel.to_string_lossy().into_owned();
+        if s.chars().count() <= MAX_LABEL_LEN {
+            return s;
+        }
+        return last_n_components(rel, 4);
+    }
+    last_n_components(p, 4)
+}
+
+fn last_n_components(p: &Path, n: usize) -> String {
+    let components: Vec<_> = p.components().collect();
+    let start = components.len().saturating_sub(n);
+    components[start..]
+        .iter()
+        .collect::<std::path::PathBuf>()
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn collapse_template_args(s: &str) -> String {
+    let mut result = String::new();
+    let mut depth = 0usize;
+    for c in s.chars() {
+        match c {
+            '<' => {
+                if depth == 0 {
+                    result.push_str("<\u{2026}>");
+                }
+                depth += 1;
+            }
+            '>' => {
+                depth = depth.saturating_sub(1);
+            }
+            _ if depth == 0 => result.push(c),
+            _ => {}
+        }
+    }
+    result
 }

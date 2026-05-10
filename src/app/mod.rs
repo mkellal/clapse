@@ -93,8 +93,8 @@ impl Widget for &mut App {
         if let Some(unit) = self.units.first_mut() {
             self.cell_span_map.clear();
             let views = match self.order_by {
-                OrderBy::StartTime => unit.views_start_time.as_slice(),
-                OrderBy::Duration => unit.views_duration.as_slice(),
+                OrderBy::StartTime => unit.views_by_start_time.as_slice(),
+                OrderBy::Duration => unit.views_by_duration.as_slice(),
             };
             UnitWidget {
                 spans: &mut unit.spans,

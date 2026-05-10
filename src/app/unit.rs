@@ -9,60 +9,6 @@ use crate::{
     },
 };
 
-const MAX_LABEL_LEN: usize = 30;
-
-fn clean_identifier(identifier: &str, build_dir: &Path) -> String {
-    if identifier.starts_with('/') {
-        return clean_path_label(identifier, build_dir);
-    }
-    if identifier.chars().count() <= MAX_LABEL_LEN {
-        return identifier.to_owned();
-    }
-    collapse_template_args(identifier)
-}
-
-fn clean_path_label(path: &str, build_dir: &Path) -> String {
-    let p = Path::new(path);
-    if let Ok(rel) = p.strip_prefix(build_dir) {
-        let s = rel.to_string_lossy().into_owned();
-        if s.chars().count() <= MAX_LABEL_LEN {
-            return s;
-        }
-        return last_n_components(rel, 4);
-    }
-    last_n_components(p, 4)
-}
-
-fn last_n_components(p: &Path, n: usize) -> String {
-    let components: Vec<_> = p.components().collect();
-    let start = components.len().saturating_sub(n);
-    components[start..]
-        .iter()
-        .collect::<std::path::PathBuf>()
-        .to_string_lossy()
-        .into_owned()
-}
-
-fn collapse_template_args(s: &str) -> String {
-    let mut result = String::new();
-    let mut depth = 0usize;
-    for c in s.chars() {
-        match c {
-            '<' => {
-                if depth == 0 {
-                    result.push_str("<\u{2026}>");
-                }
-                depth += 1;
-            }
-            '>' => {
-                depth = depth.saturating_sub(1);
-            }
-            _ if depth == 0 => result.push(c),
-            _ => {}
-        }
-    }
-    result
-}
 
 // ---------------------------------------------------------------------------
 // OrderBy + SpanEntry
@@ -85,17 +31,12 @@ pub struct SpanView {
     pub index_in_parent: usize,
 }
 
-fn build_views_start_time(spans: &[Span]) -> Vec<SpanView> {
+fn build_views_by_start_time(spans: &[Span]) -> Vec<SpanView> {
     (0..spans.len())
         .map(|i| {
             let index_in_parent = spans[i]
                 .parent_index
-                .and_then(|pi| {
-                    spans[pi]
-                        .children_indices
-                        .iter()
-                        .position(|&ci| ci == i)
-                })
+                .and_then(|pi| spans[pi].children_indices.iter().position(|&ci| ci == i))
                 .unwrap_or(0);
             SpanView {
                 span_index: i,
@@ -106,7 +47,7 @@ fn build_views_start_time(spans: &[Span]) -> Vec<SpanView> {
         .collect()
 }
 
-fn build_views_duration(spans: &[Span]) -> Vec<SpanView> {
+fn build_views_by_duration(spans: &[Span]) -> Vec<SpanView> {
     let mut entries = Vec::with_capacity(spans.len());
 
     let mut roots: Vec<usize> = (0..spans.len())
@@ -164,18 +105,17 @@ pub struct Unit {
     pub name: String,
     pub trace_file: std::path::PathBuf,
     pub spans: Vec<Span>,
-    pub absolute_start_time: f64,
     /// Precomputed render/navigation order for StartTime mode.
-    pub views_start_time: Vec<SpanView>,
+    pub views_by_start_time: Vec<SpanView>,
     /// Precomputed render/navigation order for Duration mode.
-    pub views_duration: Vec<SpanView>,
+    pub views_by_duration: Vec<SpanView>,
 }
 
 impl Unit {
     pub fn views(&self, order_by: OrderBy) -> &[SpanView] {
         match order_by {
-            OrderBy::StartTime => &self.views_start_time,
-            OrderBy::Duration => &self.views_duration,
+            OrderBy::StartTime => &self.views_by_start_time,
+            OrderBy::Duration => &self.views_by_duration,
         }
     }
 }
@@ -241,7 +181,74 @@ impl Unit {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Ninja log parsing
+// ---------------------------------------------------------------------------
+
+/// A build record parsed from a `.ninja_log` file.
+pub struct UnitTrace {
+    /// Output path of the build target (used as the unit identifier).
+    pub identifier: String,
+    /// Build start time in milliseconds.
+    pub start_ms: u64,
+    /// Build end time in milliseconds.
+    pub end_ms: u64,
+}
+
+/// Parses a ninja log file (`.ninja_log`) and returns one `UnitTrace` per
+/// entry. Duplicate outputs are de-duplicated by keeping the last occurrence
+/// (matching ninja's own behaviour).
+///
+/// The ninja log v5 format is tab-separated:
+/// ```text
+/// # ninja log v5
+/// <start_ms>\t<end_ms>\t<restat_mtime>\t<output>\t<cmdhash>
+/// ```
+pub fn parse_ninja_log(path: &Path) -> Option<Vec<UnitTrace>> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut lines = content.lines();
+
+    let header = lines.next()?;
+    if !header.starts_with("# ninja log v") {
+        return None;
+    }
+
+    // Use a map keyed by identifier to keep only the last entry per output,
+    // mirroring ninja's own de-duplication behaviour.
+    let mut seen: std::collections::HashMap<String, UnitTrace> = std::collections::HashMap::new();
+
+    for line in lines {
+        // Skip blank lines or comment lines.
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.splitn(5, '\t');
+        let start_ms: u64 = fields.next().and_then(|s| s.parse().ok())?;
+        let end_ms: u64 = fields.next().and_then(|s| s.parse().ok())?;
+        let _restat_mtime = fields.next();
+        let identifier = fields.next()?.to_owned();
+
+        seen.insert(
+            identifier.clone(),
+            UnitTrace {
+                identifier,
+                start_ms,
+                end_ms,
+            },
+        );
+    }
+
+    let mut traces: Vec<UnitTrace> = seen.into_values().collect();
+    traces.sort_by_key(|t| t.start_ms);
+    Some(traces)
+}
+
 pub fn get_units(build_dir: &std::path::PathBuf) -> Vec<Unit> {
+    // Parse the ninja log once before the parallel section so every thread
+    // can look up timings without re-reading the file.
+    let ninja_log_path = build_dir.join(".ninja_log");
+    let ninja_traces: Vec<UnitTrace> = parse_ninja_log(&ninja_log_path).unwrap_or_default();
+
     let trace_files = get_trace_files(build_dir);
     trace_files
         .par_iter()
@@ -250,14 +257,30 @@ pub fn get_units(build_dir: &std::path::PathBuf) -> Vec<Unit> {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            let trace_file_str = trace_file.to_string_lossy().to_string();
+            let identifier = trace_file.with_extension("o").to_string_lossy().to_string();
+
+            // Match against ninja log: unit identifier must end with the
+            // ninja trace identifier (e.g. "CMakeFiles/foo.dir/foo.cpp.o").
+            let ninja_match = ninja_traces
+                .iter()
+                .find(|nt| identifier.ends_with(&nt.identifier));
+
+            // Ninja log times are in ms; trace timestamps are in µs.
+            let (unit_start, unit_duration) = match ninja_match {
+                Some(nt) => (
+                    nt.start_ms as f64 * 1000.0,
+                    (nt.end_ms - nt.start_ms) as f64 * 1000.0,
+                ),
+                None => (0.0, f64::INFINITY),
+            };
+
             let mut spans = vec![Span {
                 type_: SpanType::Unit,
-                identifier: trace_file_str.clone(),
+                identifier,
                 label: name.clone(),
                 sublabel: Some("Translation Unit".to_string()),
-                start_time: 0.0,
-                duration: f64::INFINITY,
+                start_time: unit_start,
+                duration: unit_duration,
                 parent_index: None,
                 children_indices: Vec::new(),
                 index_in_unit: 0,
@@ -270,22 +293,18 @@ pub fn get_units(build_dir: &std::path::PathBuf) -> Vec<Unit> {
                 Some(d) => d,
                 None => return None,
             };
-            add_spans(&mut spans, &data);
 
-            for span in spans[1..].iter_mut() {
-                span.label = clean_identifier(&span.identifier, build_dir);
-            }
+            add_spans(&mut spans, &data, build_dir);
 
-            let views_start_time = build_views_start_time(&spans);
-            let views_duration = build_views_duration(&spans);
+            let views_start_time = build_views_by_start_time(&spans);
+            let views_duration = build_views_by_duration(&spans);
 
             Some(Unit {
                 name,
                 trace_file: trace_file.clone(),
                 spans,
-                absolute_start_time: data.beginning_of_time,
-                views_start_time,
-                views_duration,
+                views_by_start_time: views_start_time,
+                views_by_duration: views_duration,
             })
         })
         .collect()
