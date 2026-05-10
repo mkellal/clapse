@@ -89,7 +89,7 @@ pub enum SubcellAlign {
 pub struct SpanWidget<'a> {
     pub span: &'a Span,
     pub span_index: usize,
-    pub index_in_depth: usize,
+    pub index_in_parent: usize,
     pub flamegraph_area: Rect,
     pub allowed_area: Rect,
     pub time_per_col: f64,
@@ -116,7 +116,7 @@ impl<'a> SpanWidget<'a> {
         let bg_color = if is_selected {
             Color::Rgb(255, 255, 255)
         } else {
-            span.get_checkerboard_color(self.index_in_depth)
+            span.get_checkerboard_color(self.index_in_parent)
         };
         let fa = self.flamegraph_area;
 

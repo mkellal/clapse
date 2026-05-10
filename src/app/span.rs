@@ -28,8 +28,8 @@ pub struct Span {
     pub sublabel: Option<String>,
     pub start_time: f64,
     pub duration: f64,
-    pub contained_by_index: Option<usize>,
-    pub contains_indices: Vec<usize>,
+    pub parent_index: Option<usize>,
+    pub children_indices: Vec<usize>,
     pub index_in_unit: usize,
     pub depth: usize,
     /// Set after each render: true if this span occupied at least one full terminal cell.
@@ -84,8 +84,8 @@ pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData) {
             sublabel: operation,
             start_time: event.ts,
             duration: event.dur.unwrap_or(0.0),
-            contains_indices: Vec::new(),
-            contained_by_index: None,
+            children_indices: Vec::new(),
+            parent_index: None,
             index_in_unit: 0,
             depth: 0,
             has_core_cells: false,
@@ -111,8 +111,8 @@ fn link_spans(spans: &mut Vec<Span>) {
 
     // Reset linkage on all child spans (root at 0 is already clean)
     for (i, span) in spans[1..].iter_mut().enumerate() {
-        span.contained_by_index = None;
-        span.contains_indices.clear();
+        span.parent_index = None;
+        span.children_indices.clear();
         span.index_in_unit = i + 1; // +1 because we skipped the root span at index 0
         span.depth = 0;
     }
@@ -135,8 +135,8 @@ fn link_spans(spans: &mut Vec<Span>) {
         }
 
         let parent_idx = *active_parents.last().unwrap();
-        spans[i].contained_by_index = Some(parent_idx);
-        spans[parent_idx].contains_indices.push(i);
+        spans[i].parent_index = Some(parent_idx);
+        spans[parent_idx].children_indices.push(i);
         spans[i].depth = active_parents.len(); // root is depth 0, its children depth 1, etc.
 
         active_parents.push(i);
@@ -146,12 +146,12 @@ fn link_spans(spans: &mut Vec<Span>) {
         // Finalise root span bounds from its direct children
         let min_start = spans[1..]
             .iter()
-            .filter(|s| s.contained_by_index == Some(0))
+            .filter(|s| s.parent_index == Some(0))
             .map(|s| s.start_time)
             .fold(f64::INFINITY, f64::min);
         let max_end = spans[1..]
             .iter()
-            .filter(|s| s.contained_by_index == Some(0))
+            .filter(|s| s.parent_index == Some(0))
             .map(|s| s.start_time + s.duration)
             .fold(f64::NEG_INFINITY, f64::max);
         if min_start.is_finite() && max_end.is_finite() {

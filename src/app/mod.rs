@@ -11,11 +11,11 @@ use std::collections::HashMap;
 pub mod span;
 pub mod unit;
 use self::unit::Unit;
-use crate::app::unit::{FollowingSpanDirection, HorizontalDirection, get_units};
+use crate::app::unit::{FollowingSpanDirection, HorizontalDirection, OrderBy, get_units};
 use crate::cli;
 use crate::widgets::span_details::SpanDetails;
 use crate::widgets::time_range::DurationRange;
-use crate::widgets::unit::{OrderBy, UnitWidget};
+use crate::widgets::unit::UnitWidget;
 
 /// RAII guard that enables mouse capture on creation and disables it on drop.
 struct MouseCaptureGuard;
@@ -59,7 +59,7 @@ impl Widget for &mut App {
                 .spans
                 .get(si)
                 .map(|span| {
-                    let parent_duration = span.contained_by_index
+                    let parent_duration = span.parent_index
                         .and_then(|pi| self.units[ui].spans.get(pi))
                         .map(|p| p.duration);
                     SpanDetails { span, parent_duration, total_duration }.required_height(area.width)
@@ -92,12 +92,16 @@ impl Widget for &mut App {
 
         if let Some(unit) = self.units.first_mut() {
             self.cell_span_map.clear();
+            let views = match self.order_by {
+                OrderBy::StartTime => unit.views_start_time.as_slice(),
+                OrderBy::Duration => unit.views_duration.as_slice(),
+            };
             UnitWidget {
                 spans: &mut unit.spans,
+                views,
                 selected_span_index,
                 total_duration: visible_duration,
                 start_time,
-                order_by: self.order_by,
                 cell_map: &mut self.cell_span_map,
             }
             .render(graph_area, buf);
@@ -105,7 +109,7 @@ impl Widget for &mut App {
 
         if let Some((ui, si)) = self.selected_indexes {
             if let Some(span) = self.units[ui].spans.get(si) {
-                let parent_duration = span.contained_by_index
+                let parent_duration = span.parent_index
                     .and_then(|pi| self.units[ui].spans.get(pi))
                     .map(|p| p.duration);
                 SpanDetails { span, parent_duration, total_duration }.render(details_area, buf);
@@ -156,28 +160,25 @@ impl App {
             }
         };
         let unit = &self.units[ui];
+        let views = unit.views(self.order_by);
         let new_si = match direction {
             FollowingSpanDirection::Next | FollowingSpanDirection::Previous => {
                 let horiz = match direction {
                     FollowingSpanDirection::Next => HorizontalDirection::Next,
                     _ => HorizontalDirection::Previous,
                 };
-                unit.get_following_span_index(si, horiz, true, self.order_by)
+                unit.get_following_span_index(si, horiz, views)
             }
             FollowingSpanDirection::Parent => unit
                 .get_parent_span(&unit.spans[si])
                 .map(|s| s.index_in_unit),
-            FollowingSpanDirection::Child => {
-                let mut children = unit.get_child_spans(&unit.spans[si], true);
-                if self.order_by == OrderBy::Duration {
-                    children.sort_by(|a, b| {
-                        b.duration
-                            .partial_cmp(&a.duration)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                }
-                children.into_iter().next().map(|s| s.index_in_unit)
-            }
+            FollowingSpanDirection::Child => views
+                .iter()
+                .find(|e| {
+                    unit.spans[e.span_index].parent_index == Some(si)
+                        && unit.spans[e.span_index].was_displayed
+                })
+                .map(|e| e.span_index),
         };
         if let Some(next_si) = new_si {
             self.selected_indexes = Some((ui, next_si));
@@ -199,12 +200,19 @@ impl App {
             Some(idx) => idx,
             None => return,
         };
-        let span = match self.units[ui].spans.get(si) {
-            Some(s) => s,
+        let span_duration = match self.units[ui].spans.get(si) {
+            Some(s) => s.duration,
             None => return,
         };
-        let span_duration = span.duration;
-        let span_center = span.start_time + span_duration / 2.0;
+        let effective_start = match self.units[ui]
+            .views(self.order_by)
+            .iter()
+            .find(|e| e.span_index == si)
+        {
+            Some(e) => e.effective_start,
+            None => return,
+        };
+        let span_center = effective_start + span_duration / 2.0;
 
         let new_visible = span_duration / 0.75;
         let total = self.total_duration();

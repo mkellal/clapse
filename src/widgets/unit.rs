@@ -3,111 +3,15 @@ use std::collections::HashMap;
 use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
 
 use crate::app::span::Span;
+use crate::app::unit::SpanView;
 use crate::widgets::span::{SpanWidget, SubcellAlign, flush_subcell_tracker};
-
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum OrderBy {
-    #[default]
-    StartTime,
-    Duration,
-}
-
-/// A lightweight render entry with the computed positioning data for one span.
-/// Does not borrow the spans slice — the loop indexes self.spans[span_index] directly.
-struct SpanEntry {
-    /// Index into the original spans slice.
-    span_index: usize,
-    /// The start time to use for x-positioning (may differ from span.start_time in Duration mode).
-    effective_start: f64,
-    /// Position among siblings, used for checkerboard coloring.
-    index_in_depth: usize,
-}
-
-// ---------------------------------------------------------------------------
-// Entry-list builders
-// ---------------------------------------------------------------------------
-
-fn entries_start_time(spans: &[Span]) -> Vec<SpanEntry> {
-    (0..spans.len())
-        .map(|i| {
-            let index_in_depth = spans[i]
-                .contained_by_index
-                .and_then(|pi| {
-                    spans[pi]
-                        .contains_indices
-                        .iter()
-                        .position(|&ci| ci == i)
-                })
-                .unwrap_or(0);
-            SpanEntry {
-                span_index: i,
-                effective_start: spans[i].start_time,
-                index_in_depth,
-            }
-        })
-        .collect()
-}
-
-fn entries_duration(spans: &[Span]) -> Vec<SpanEntry> {
-    let mut entries = Vec::with_capacity(spans.len());
-
-    let mut roots: Vec<usize> = (0..spans.len())
-        .filter(|&i| spans[i].contained_by_index.is_none())
-        .collect();
-    roots.sort_by(|&a, &b| {
-        spans[b]
-            .duration
-            .partial_cmp(&spans[a].duration)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    let mut cursor = 0.0f64;
-    for (sib_pos, r) in roots.iter().enumerate() {
-        visit_duration(spans, *r, cursor, sib_pos, &mut entries);
-        cursor += spans[*r].duration;
-    }
-
-    entries
-}
-
-fn visit_duration(
-    spans: &[Span],
-    i: usize,
-    virtual_start: f64,
-    index_in_depth: usize,
-    entries: &mut Vec<SpanEntry>,
-) {
-    entries.push(SpanEntry {
-        span_index: i,
-        effective_start: virtual_start,
-        index_in_depth,
-    });
-
-    let mut children = spans[i].contains_indices.clone();
-    children.sort_by(|&a, &b| {
-        spans[b]
-            .duration
-            .partial_cmp(&spans[a].duration)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    let mut cursor = virtual_start;
-    for (sib_pos, c) in children.iter().enumerate() {
-        visit_duration(spans, *c, cursor, sib_pos, entries);
-        cursor += spans[*c].duration;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Widget
-// ---------------------------------------------------------------------------
 
 pub struct UnitWidget<'a> {
     pub spans: &'a mut [Span],
+    pub views: &'a [SpanView],
     pub selected_span_index: Option<usize>,
     pub total_duration: f64,
     pub start_time: f64,
-    pub order_by: OrderBy,
     // terminal cell (col, row) -> span index.
     pub cell_map: &'a mut HashMap<(u16, u16), usize>,
 }
@@ -131,21 +35,16 @@ impl<'a> Widget for UnitWidget<'a> {
             span.was_displayed = false;
         }
 
-        let entries = match self.order_by {
-            OrderBy::StartTime => entries_start_time(self.spans),
-            OrderBy::Duration => entries_duration(self.spans),
-        };
-
-        for entry in &entries {
+        for entry in self.views {
             let i = entry.span_index;
             let span = &self.spans[i];
 
             // Determine the x-clamp range from the parent's core bounds.
             // Skip this span entirely if the parent had no core cells.
-            let clamp: (u16, u16) = if let Some(pi) = span.contained_by_index {
+            let clamp: (u16, u16) = if let Some(pi) = span.parent_index {
                 match core_bounds[pi] {
                     Some(b) => b,
-                    None => continue, // parent had no core cells
+                    None => continue,
                 }
             } else {
                 (area.x, area.right())
@@ -172,7 +71,7 @@ impl<'a> Widget for UnitWidget<'a> {
             let widget = SpanWidget {
                 span,
                 span_index: i,
-                index_in_depth: entry.index_in_depth,
+                index_in_parent: entry.index_in_parent,
                 flamegraph_area: area,
                 allowed_area,
                 time_per_col,
