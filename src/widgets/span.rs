@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use colors_transform::{Color as _, Hsl, Rgb};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -98,6 +97,8 @@ pub struct SpanWidget<'a> {
     /// overridden to a virtual position in Duration mode.
     pub effective_start: f64,
     pub selected_span_index: Option<usize>,
+    /// When set, overrides the computed checkerboard color for this span.
+    pub color_override: Option<Color>,
 }
 
 impl<'a> SpanWidget<'a> {
@@ -115,8 +116,14 @@ impl<'a> SpanWidget<'a> {
         let y = self.allowed_area.y;
         let bg_color = if is_selected {
             Color::Rgb(255, 255, 255)
+        } else if let Some(c) = self.color_override {
+            c
         } else {
-            span.get_checkerboard_color(self.index_in_parent)
+            crate::widgets::color::span_color(
+                span.type_.base_color(),
+                span.depth,
+                self.index_in_parent,
+            )
         };
         let area = self.display_area;
 
@@ -250,36 +257,4 @@ pub fn flush_subcell_tracker(
         }
     }
     winners
-}
-
-impl Span {
-    pub fn get_checkerboard_color(&self, horizontal_index: usize) -> Color {
-        let base = self.type_.base_color();
-        let (r0, g0, b0) = match base {
-            Color::Rgb(r, g, b) => (r, g, b),
-            _ => (128, 128, 128),
-        };
-        let hsl = Rgb::from(r0 as f32, g0 as f32, b0 as f32).to_hsl();
-
-        // Horizontal variation: slight hue shift for odd siblings
-        let hue = if horizontal_index % 2 != 0 {
-            hsl.get_hue().clamp(0.0, 359.0)
-        } else {
-            (hsl.get_hue() + 10.0).clamp(0.0, 359.0)
-        };
-
-        // Vertical variation: lightness shift for odd depth rows
-        let lightness = if self.depth % 2 != 0 {
-            hsl.get_lightness().clamp(0.0, 100.0)
-        } else {
-            (hsl.get_lightness() - 10.0).clamp(0.0, 100.0)
-        };
-
-        let rgb = Hsl::from(hue, hsl.get_saturation(), lightness).to_rgb();
-        Color::Rgb(
-            rgb.get_red() as u8,
-            rgb.get_green() as u8,
-            rgb.get_blue() as u8,
-        )
-    }
 }

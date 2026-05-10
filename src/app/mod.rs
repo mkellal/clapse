@@ -44,16 +44,12 @@ pub struct App {
     zoom: f64,
     start_time: f64,
     selected_indexes: Option<(usize, usize)>, // (unit index, span index)
-    /// Maps terminal cell (col, row) → (unit_index, span_index). Rebuilt every frame.
+    /// Maps terminal cell (col, row) → (unit_index, span_index).
     cell_span_map: HashMap<(u16, u16), (usize, usize)>,
     order_by: OrderBy,
-    /// Vertical scroll offset (rows) into the flamegraph virtual canvas.
     vertical_scroll: u16,
-    /// Measured height of the graph viewport from the last render.
     viewport_height: u16,
-    /// Measured width of the graph viewport from the last render.
     viewport_width: u16,
-    /// Total virtual height of all tracks from the last render.
     content_height: u16,
 }
 
@@ -143,7 +139,8 @@ impl Widget for &mut App {
                 let label = Some(format!("Thread {}", track_idx));
                 let units_entries: Vec<UnitEntry> = track_units
                     .iter()
-                    .filter_map(|&ui| {
+                    .enumerate()
+                    .filter_map(|(pos_in_track, &ui)| {
                         let unit = self.units.get_mut(ui)?;
                         let views: &[crate::app::unit::SpanView] = match order_by {
                             OrderBy::StartTime => unit.views_by_start_time.as_slice(),
@@ -161,6 +158,7 @@ impl Widget for &mut App {
                             unsafe { std::mem::transmute(unit.spans.as_mut_slice()) };
                         Some(UnitEntry {
                             unit_index: ui,
+                            position_in_track: pos_in_track,
                             spans,
                             views,
                             selected_span_index,

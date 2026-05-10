@@ -13,6 +13,8 @@ pub struct UnitWidget<'a> {
     pub total_duration: f64,
     pub start_time: f64,
     pub unit_index: usize,
+    /// Position of this unit within its track. Used to derive the root-span color.
+    pub position_in_track: usize,
     /// Number of depth rows to skip from the top (for vertical scrolling).
     /// Spans at depth < row_skip are not rendered but their x-bounds are still
     /// computed so their children can use them for clamping.
@@ -86,6 +88,16 @@ impl<'a> Widget for UnitWidget<'a> {
 
             let allowed_area = Rect::new(x_start, y, width, 1);
 
+            let color_override = if span.parent_index.is_none() {
+                Some(crate::widgets::color::span_color(
+                    span.type_.base_color(),
+                    0,
+                    self.position_in_track,
+                ))
+            } else {
+                None
+            };
+
             let widget = SpanWidget {
                 span,
                 span_index: i,
@@ -96,6 +108,7 @@ impl<'a> Widget for UnitWidget<'a> {
                 start_time: self.start_time,
                 effective_start: entry.effective_start,
                 selected_span_index: self.selected_span_index,
+                color_override,
             };
 
             let span_core_bounds = widget.render_with_tracker(buf, &mut subcell_tracker);

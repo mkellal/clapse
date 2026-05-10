@@ -42,6 +42,9 @@ pub struct UnitEntry<'a> {
     /// Global index of this unit in `App::units` — used as the `unit_index`
     /// key stored in the cell map so mouse clicks resolve correctly.
     pub unit_index: usize,
+    /// Position of this unit within its track (0-based). Used to derive the
+    /// root-span color via `span_color`.
+    pub position_in_track: usize,
     pub spans: &'a mut [Span],
     pub views: &'a [SpanView],
     pub selected_span_index: Option<usize>,
@@ -104,6 +107,7 @@ impl<'a> Widget for TrackWidget<'a> {
                 total_duration: self.total_duration,
                 start_time: self.start_time,
                 unit_index: entry.unit_index,
+                position_in_track: entry.position_in_track,
                 row_skip: unit_row_skip,
                 cell_map: self.cell_map,
             }

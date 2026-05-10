@@ -4,7 +4,7 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Debug unit tests in library 'clapse'",
+      "name": "Debug executable 'clapse'",
       "cargo": {
         "args": [
           "build",

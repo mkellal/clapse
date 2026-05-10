@@ -1,3 +1,4 @@
+pub mod color;
 pub mod flamegraph;
 pub mod span;
 pub mod span_details;
