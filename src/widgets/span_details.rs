@@ -167,12 +167,12 @@ impl<'a> Widget for SpanDetails<'a> {
         if let Some(pd) = self.parent_duration {
             if pd > 0.0 {
                 let pct = span.duration / pd * 100.0;
-                pills.push(format!(" {:.1}% parent ", pct));
+                pills.push(format!(" {:.1}% of parent ", pct));
             }
         }
         if self.total_duration > 0.0 {
             let pct = span.duration / self.total_duration * 100.0;
-            pills.push(format!(" {:.3}% total ", pct));
+            pills.push(format!(" {:.3}% of total ", pct));
         }
         pills.push(format!(" {} → {} ", format_time(start), format_time(end)));
         let pill_style = Style::default()

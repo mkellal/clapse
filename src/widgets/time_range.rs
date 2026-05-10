@@ -90,7 +90,7 @@ impl Widget for DurationRange {
         // Full width = [0, total_duration]. Thumb covers the visible range.
         for x in 0..area.width {
             if let Some(cell) = buf.cell_mut((area.x + x, scroll_y)) {
-                cell.set_symbol("▔");
+                cell.set_symbol("▀");
                 cell.set_fg(Color::DarkGray);
             }
         }
@@ -104,7 +104,7 @@ impl Widget for DurationRange {
         for x in thumb_start..thumb_end {
             if let Some(cell) = buf.cell_mut((area.x + x, scroll_y)) {
                 cell.set_symbol("▀");
-                cell.set_fg(Color::Cyan);
+                cell.set_fg(Color::White);
             }
         }
 
@@ -112,7 +112,7 @@ impl Widget for DurationRange {
             let x = thumb_start.min(area.width.saturating_sub(1));
             if let Some(cell) = buf.cell_mut((area.x + x, scroll_y)) {
                 cell.set_symbol("▀");
-                cell.set_fg(Color::Cyan);
+                cell.set_fg(Color::White);
             }
         }
     }

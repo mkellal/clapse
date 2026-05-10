@@ -93,7 +93,9 @@ impl Widget for &mut App {
         } else {
             0
         };
-        let graph_height = area.height.saturating_sub(scrollbar_height);
+        let graph_height = area
+            .height
+            .saturating_sub(scrollbar_height + details_height);
         let vertical_scrollbar_width: u16 = if area.width > 1 { 1 } else { 0 };
         let graph_width = area.width.saturating_sub(vertical_scrollbar_width);
 
@@ -104,6 +106,12 @@ impl Widget for &mut App {
             area.y + scrollbar_height,
             vertical_scrollbar_width,
             graph_height,
+        );
+        let details_area = Rect::new(
+            area.x,
+            area.y + scrollbar_height + graph_height,
+            area.width,
+            details_height,
         );
 
         let start_time = self.start_time;
@@ -182,7 +190,7 @@ impl Widget for &mut App {
 
         if vscrollbar_area.width > 0 && vscrollbar_area.height > 0 {
             let muted_style = Style::default().fg(Color::DarkGray);
-            let active_style = Style::default().fg(Color::Cyan);
+            let active_style = Style::default().fg(Color::White);
 
             for y in vscrollbar_area.y..vscrollbar_area.bottom() {
                 buf.set_string(vscrollbar_area.x, y, "│", muted_style);
@@ -221,15 +229,6 @@ impl Widget for &mut App {
                     .parent_index
                     .and_then(|pi| self.units[ui].spans.get(pi))
                     .map(|p| p.duration);
-                let overlay_height = details_height.min(graph_area.height);
-                let details_area = Rect::new(
-                    graph_area.x,
-                    graph_area
-                        .y
-                        .saturating_add(graph_area.height.saturating_sub(overlay_height)),
-                    graph_area.width,
-                    overlay_height,
-                );
                 SpanDetails {
                     span,
                     parent_duration,
