@@ -11,7 +11,9 @@ use std::collections::HashMap;
 pub mod span;
 pub mod unit;
 use self::unit::Unit;
-use crate::app::unit::{FollowingSpanDirection, HorizontalDirection, OrderBy, get_units, schedule_units};
+use crate::app::unit::{
+    FollowingSpanDirection, HorizontalDirection, OrderBy, get_units, schedule_units,
+};
 use crate::cli;
 use crate::widgets::flamegraph::{FlamegraphWidget, TrackInput};
 use crate::widgets::span_details::SpanDetails;
@@ -46,6 +48,10 @@ pub struct App {
     order_by: OrderBy,
     /// Vertical scroll offset (rows) into the flamegraph virtual canvas.
     vertical_scroll: u16,
+    /// Measured height of the graph viewport from the last render.
+    viewport_height: u16,
+    /// Measured width of the graph viewport from the last render.
+    viewport_width: u16,
 }
 
 impl Widget for &mut App {
@@ -65,10 +71,16 @@ impl Widget for &mut App {
                 .spans
                 .get(si)
                 .map(|span| {
-                    let parent_duration = span.parent_index
+                    let parent_duration = span
+                        .parent_index
                         .and_then(|pi| self.units[ui].spans.get(pi))
                         .map(|p| p.duration);
-                    SpanDetails { span, parent_duration, total_duration }.required_height(area.width)
+                    SpanDetails {
+                        span,
+                        parent_duration,
+                        total_duration,
+                    }
+                    .required_height(area.width)
                 })
                 .unwrap_or(0)
         } else {
@@ -96,6 +108,8 @@ impl Widget for &mut App {
 
         self.cell_span_map.clear();
         let graph_area = Rect::new(area.x, area.y + scrollbar_height, area.width, graph_height);
+        self.viewport_height = graph_height;
+        self.viewport_width = graph_area.width;
         let order_by = self.order_by;
         let label_height: u16 = 1;
         let track_inputs: Vec<TrackInput> = self
@@ -104,9 +118,14 @@ impl Widget for &mut App {
             .enumerate()
             .map(|(track_idx, track_units)| {
                 use crate::widgets::track::track_content_height;
-                let intrinsic_height =
-                    track_content_height(track_units, &self.units) + label_height;
-                let label = Some(format!("Track {}", track_idx));
+                let intrinsic_height = track_content_height(
+                    track_units,
+                    &self.units,
+                    start_time,
+                    visible_duration,
+                    graph_area.width,
+                ) + label_height;
+                let label = Some(format!("Thread {}", track_idx));
                 let units_entries: Vec<UnitEntry> = track_units
                     .iter()
                     .filter_map(|&ui| {
@@ -133,7 +152,11 @@ impl Widget for &mut App {
                         })
                     })
                     .collect();
-                TrackInput { label, units: units_entries, intrinsic_height }
+                TrackInput {
+                    label,
+                    units: units_entries,
+                    intrinsic_height,
+                }
             })
             .collect();
         FlamegraphWidget {
@@ -147,10 +170,16 @@ impl Widget for &mut App {
 
         if let Some((ui, si)) = self.selected_indexes {
             if let Some(span) = self.units[ui].spans.get(si) {
-                let parent_duration = span.parent_index
+                let parent_duration = span
+                    .parent_index
                     .and_then(|pi| self.units[ui].spans.get(pi))
                     .map(|p| p.duration);
-                SpanDetails { span, parent_duration, total_duration }.render(details_area, buf);
+                SpanDetails {
+                    span,
+                    parent_duration,
+                    total_duration,
+                }
+                .render(details_area, buf);
             }
         }
     }
@@ -171,7 +200,9 @@ impl Default for App {
                     .map(|s| s.duration)
                     .sum()
             };
-            dur(b).partial_cmp(&dur(a)).unwrap_or(std::cmp::Ordering::Equal)
+            dur(b)
+                .partial_cmp(&dur(a))
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         Self {
             units,
@@ -182,6 +213,8 @@ impl Default for App {
             cell_span_map: HashMap::new(),
             order_by: OrderBy::StartTime,
             vertical_scroll: 0,
+            viewport_height: 0,
+            viewport_width: 0,
         }
     }
 }
@@ -209,7 +242,14 @@ impl App {
         let (ui, si) = match self.selected_indexes {
             Some(idx) => idx,
             None => {
-                self.selected_indexes = Some((0, 0));
+                // Initialize to first unit, first displayed span.
+                let first_unit = 0;
+                let first_displayed_span = self
+                    .units
+                    .get(first_unit)
+                    .and_then(|u| u.spans.iter().position(|s| s.was_displayed))
+                    .unwrap_or(0);
+                self.selected_indexes = Some((first_unit, first_displayed_span));
                 return;
             }
         };
@@ -255,7 +295,10 @@ impl App {
             }
             FollowingSpanDirection::Parent => {
                 let unit = &self.units[ui];
-                if let Some(new_si) = unit.get_parent_span(&unit.spans[si]).map(|s| s.index_in_unit) {
+                if let Some(new_si) = unit
+                    .get_parent_span(&unit.spans[si])
+                    .map(|s| s.index_in_unit)
+                {
                     self.selected_indexes = Some((ui, new_si));
                 }
             }
@@ -286,6 +329,64 @@ impl App {
         })
     }
 
+    fn compute_track_positions(&self) -> Vec<(u16, u16)> {
+        use crate::widgets::track::track_content_height;
+        if self.viewport_width == 0 {
+            return Vec::new();
+        }
+        let start_time = self.start_time;
+        let visible_duration = self.visible_duration();
+        let mut positions = Vec::new();
+        let mut virtual_y: u16 = 0;
+        for track_units in self.tracks.iter() {
+            let label_height: u16 = 1;
+            let track_height = track_content_height(
+                track_units,
+                &self.units,
+                start_time,
+                visible_duration,
+                self.viewport_width,
+            ) + label_height;
+            let track_start = virtual_y;
+            let track_end = virtual_y.saturating_add(track_height);
+            positions.push((track_start, track_end));
+            virtual_y = track_end;
+        }
+        positions
+    }
+
+    fn center_track(&mut self, track_idx: usize) {
+        if track_idx >= self.tracks.len() || self.viewport_height == 0 {
+            return;
+        }
+        let positions = self.compute_track_positions();
+        if track_idx >= positions.len() {
+            return;
+        }
+        let (track_start, track_end) = positions[track_idx];
+        let total_height = positions.last().map(|(_, end)| *end).unwrap_or(0);
+        if total_height <= self.viewport_height {
+            self.vertical_scroll = 0;
+            return;
+        }
+
+        let track_center = track_start.saturating_add(track_end.saturating_sub(track_start) / 2);
+        let max_scroll = total_height.saturating_sub(self.viewport_height);
+        self.vertical_scroll = track_center
+            .saturating_sub(self.viewport_height / 2)
+            .min(max_scroll);
+    }
+
+    fn center_selected_track(&mut self) {
+        let Some((ui, _)) = self.selected_indexes else {
+            return;
+        };
+        let Some((track_idx, _)) = self.track_of_unit(ui) else {
+            return;
+        };
+        self.center_track(track_idx);
+    }
+
     /// Move the selection to the first unit root of the next/previous track.
     fn switch_track(&mut self, dir: HorizontalDirection) {
         if self.tracks.is_empty() {
@@ -314,7 +415,15 @@ impl App {
             })
             .or_else(|| self.tracks[new_ti].first().copied());
         if let Some(new_ui) = first_visible {
-            self.selected_indexes = Some((new_ui, 0));
+            let first_displayed_span = self.units[new_ui]
+                .spans
+                .iter()
+                .position(|s| s.was_displayed)
+                .unwrap_or(0);
+            self.selected_indexes = Some((new_ui, first_displayed_span));
+            // Auto-scroll to make the new track visible. Use a reasonable estimate for viewport height.
+            // (The actual height will be computed during render, but we use a typical terminal height.)
+            self.center_track(new_ti);
         }
     }
 
@@ -325,9 +434,10 @@ impl App {
         self.start_time = (center - new_half).max(0.0);
         let max_start = (self.total_duration() - self.visible_duration()).max(0.0);
         self.start_time = self.start_time.min(max_start);
+        self.center_selected_track();
     }
 
-    /// Zoom so the selected span occupies ~60% of the viewport and center on it.
+    /// Zoom so the selected span occupies ~75% of the viewport and center on it.
     fn zoom_to_selected(&mut self) {
         let (ui, si) = match self.selected_indexes {
             Some(idx) => idx,
@@ -354,6 +464,7 @@ impl App {
         self.start_time = (span_center - actual_visible / 2.0)
             .max(0.0)
             .min((total - actual_visible).max(0.0));
+        self.center_selected_track();
     }
 
     fn event_loop(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
@@ -418,6 +529,7 @@ impl App {
                         KeyCode::Char(' ') if ctrl => {
                             self.zoom = 1.0;
                             self.start_time = 0.0;
+                            self.center_selected_track();
                         }
                         KeyCode::Char(' ') => self.zoom_to_selected(),
                         KeyCode::Esc => self.selected_indexes = None,

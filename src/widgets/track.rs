@@ -12,16 +12,28 @@ use crate::app::unit::{SpanView, Unit};
 
 use super::unit::UnitWidget;
 
-/// Returns the number of content rows needed to display the units in `track_units`:
-/// `max(span.depth) + 1` across all spans in the track (minimum 1).
-pub fn track_content_height(track_units: &[usize], units: &[Unit]) -> u16 {
+/// Returns the number of content rows needed to display the track.
+/// Height is based on the deepest span in the full track, not the current viewport.
+pub fn track_content_height(
+    track_units: &[usize],
+    units: &[Unit],
+    _start_time: f64,
+    visible_duration: f64,
+    area_width: u16,
+) -> u16 {
+    let cell_duration = visible_duration / area_width as f64;
     track_units
         .iter()
         .filter_map(|&ui| units.get(ui))
-        .flat_map(|u| u.spans.iter())
-        .map(|s| s.depth)
+        .map(|u| {
+            u.spans
+                .iter()
+                .filter_map(|s| (s.duration > cell_duration).then_some(s.depth))
+                .max()
+                .unwrap_or(0) as u16
+                + 1
+        })
         .max()
-        .map(|d| d as u16 + 1)
         .unwrap_or(1)
 }
 
@@ -69,8 +81,16 @@ impl<'a> Widget for TrackWidget<'a> {
             let used = prefix_len + label_len;
             let suffix_len = area.width.saturating_sub(used);
             buf.set_string(area.x, y, prefix, muted);
-            buf.set_stringn(area.x + prefix_len, y, &label_with_space, label_len as usize, muted);
-            let suffix: String = std::iter::repeat(suffix_char).take(suffix_len as usize).collect();
+            buf.set_stringn(
+                area.x + prefix_len,
+                y,
+                &label_with_space,
+                label_len as usize,
+                muted,
+            );
+            let suffix: String = std::iter::repeat(suffix_char)
+                .take(suffix_len as usize)
+                .collect();
             buf.set_string(area.x + prefix_len + label_len, y, &suffix, muted);
             let content_y = area.y + label_rows;
             let content_h = area.height.saturating_sub(label_rows);
