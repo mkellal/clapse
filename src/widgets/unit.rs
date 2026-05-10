@@ -13,6 +13,10 @@ pub struct UnitWidget<'a> {
     pub total_duration: f64,
     pub start_time: f64,
     pub unit_index: usize,
+    /// Number of depth rows to skip from the top (for vertical scrolling).
+    /// Spans at depth < row_skip are not rendered but their x-bounds are still
+    /// computed so their children can use them for clamping.
+    pub row_skip: u16,
     // terminal cell (col, row) -> (unit_index, span_index).
     pub cell_map: &'a mut HashMap<(u16, u16), (usize, usize)>,
 }
@@ -52,11 +56,9 @@ impl<'a> Widget for UnitWidget<'a> {
             };
 
             let depth = span.depth;
-            let y = area.y + depth as u16;
-            if y >= area.bottom() {
-                continue;
-            }
 
+            // Compute x extent for every span, even those above the viewport,
+            // so that their children can use the bounds for clamping.
             let sf = (entry.effective_start - self.start_time) / time_per_col;
             let ef = (entry.effective_start + span.duration - self.start_time) / time_per_col;
             let x_start = (area.x as i32 + sf.round() as i32)
@@ -66,6 +68,17 @@ impl<'a> Widget for UnitWidget<'a> {
                 .max(clamp.0 as i32)
                 .min(clamp.1 as i32) as u16;
             let width = x_end.saturating_sub(x_start);
+
+            // Spans above the viewport (due to row_skip): propagate bounds but don't render.
+            if (depth as u16) < self.row_skip {
+                core_bounds[i] = if width > 0 { Some((x_start, x_end)) } else { None };
+                continue;
+            }
+
+            let y = area.y + depth as u16 - self.row_skip;
+            if y >= area.bottom() {
+                continue;
+            }
 
             let allowed_area = Rect::new(x_start, y, width, 1);
 

@@ -13,9 +13,10 @@ pub mod unit;
 use self::unit::Unit;
 use crate::app::unit::{FollowingSpanDirection, HorizontalDirection, OrderBy, get_units, schedule_units};
 use crate::cli;
+use crate::widgets::flamegraph::{FlamegraphWidget, TrackInput};
 use crate::widgets::span_details::SpanDetails;
 use crate::widgets::time_range::DurationRange;
-use crate::widgets::track::{TrackWidget, UnitEntry, track_content_height};
+use crate::widgets::track::UnitEntry;
 
 /// RAII guard that enables mouse capture on creation and disables it on drop.
 struct MouseCaptureGuard;
@@ -43,6 +44,8 @@ pub struct App {
     /// Maps terminal cell (col, row) → (unit_index, span_index). Rebuilt every frame.
     cell_span_map: HashMap<(u16, u16), (usize, usize)>,
     order_by: OrderBy,
+    /// Vertical scroll offset (rows) into the flamegraph virtual canvas.
+    vertical_scroll: u16,
 }
 
 impl Widget for &mut App {
@@ -74,22 +77,6 @@ impl Widget for &mut App {
         let graph_height = area
             .height
             .saturating_sub(scrollbar_height + details_height);
-        let num_tracks = self.tracks.len().max(1) as u16;
-        // Compute the intrinsic height of each track (content rows + label row).
-        let label_height: u16 = 1;
-        let track_heights: Vec<u16> = self
-            .tracks
-            .iter()
-            .map(|t| track_content_height(t, &self.units) + label_height)
-            .collect();
-        let total_tracks_height: u16 = track_heights.iter().copied().sum();
-        // Scale down uniformly if tracks don't fit the available graph area.
-        let scale = if total_tracks_height > 0 && total_tracks_height > graph_height {
-            graph_height as f64 / total_tracks_height as f64
-        } else {
-            1.0
-        };
-        let _ = num_tracks; // used indirectly via track_heights
 
         let scrollbar_area = Rect::new(area.x, area.y, area.width, scrollbar_height);
         let details_area = Rect::new(
@@ -108,55 +95,55 @@ impl Widget for &mut App {
         scrollbar.render(scrollbar_area, buf);
 
         self.cell_span_map.clear();
-        let mut track_y = area.y + scrollbar_height;
-        for (track_idx, track_units) in self.tracks.iter().enumerate() {
-            let intrinsic = *track_heights.get(track_idx).unwrap_or(&1);
-            let this_height = ((intrinsic as f64 * scale).round() as u16).max(1);
-            // Clamp so we don't exceed the graph area.
-            let remaining = (area.y + scrollbar_height + graph_height).saturating_sub(track_y);
-            let this_height = this_height.min(remaining);
-            if this_height == 0 {
-                break;
-            }
-            let track_area = Rect::new(area.x, track_y, area.width, this_height);
-            let label = format!("Thread {}", track_idx);
-            let order_by = self.order_by;
-            let units_entries: Vec<UnitEntry> = track_units
-                .iter()
-                .filter_map(|&ui| {
-                    let unit = self.units.get_mut(ui)?;
-                    let views: &[crate::app::unit::SpanView] = match order_by {
-                        OrderBy::StartTime => unit.views_by_start_time.as_slice(),
-                        OrderBy::Duration => unit.views_by_duration.as_slice(),
-                    };
-                    let selected_span_index = self
-                        .selected_indexes
-                        .filter(|&(suu, _)| suu == ui)
-                        .map(|(_, si)| si);
-                    // Safety: we hold a unique &mut self, so we can extend the
-                    // lifetime of views to match the unit borrow.
-                    let views: &'_ [crate::app::unit::SpanView] =
-                        unsafe { std::mem::transmute(views) };
-                    let spans: &'_ mut [crate::app::span::Span] =
-                        unsafe { std::mem::transmute(unit.spans.as_mut_slice()) };
-                    Some(UnitEntry {
-                        unit_index: ui,
-                        spans,
-                        views,
-                        selected_span_index,
+        let graph_area = Rect::new(area.x, area.y + scrollbar_height, area.width, graph_height);
+        let order_by = self.order_by;
+        let label_height: u16 = 1;
+        let track_inputs: Vec<TrackInput> = self
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(track_idx, track_units)| {
+                use crate::widgets::track::track_content_height;
+                let intrinsic_height =
+                    track_content_height(track_units, &self.units) + label_height;
+                let label = Some(format!("Track {}", track_idx));
+                let units_entries: Vec<UnitEntry> = track_units
+                    .iter()
+                    .filter_map(|&ui| {
+                        let unit = self.units.get_mut(ui)?;
+                        let views: &[crate::app::unit::SpanView] = match order_by {
+                            OrderBy::StartTime => unit.views_by_start_time.as_slice(),
+                            OrderBy::Duration => unit.views_by_duration.as_slice(),
+                        };
+                        let selected_span_index = self
+                            .selected_indexes
+                            .filter(|&(suu, _)| suu == ui)
+                            .map(|(_, si)| si);
+                        // Safety: we hold a unique &mut self, so we can extend the
+                        // lifetime of views to match the unit borrow.
+                        let views: &'_ [crate::app::unit::SpanView] =
+                            unsafe { std::mem::transmute(views) };
+                        let spans: &'_ mut [crate::app::span::Span] =
+                            unsafe { std::mem::transmute(unit.spans.as_mut_slice()) };
+                        Some(UnitEntry {
+                            unit_index: ui,
+                            spans,
+                            views,
+                            selected_span_index,
+                        })
                     })
-                })
-                .collect();
-            TrackWidget {
-                label: Some(label.as_str()),
-                units: units_entries,
-                total_duration: visible_duration,
-                start_time,
-                cell_map: &mut self.cell_span_map,
-            }
-            .render(track_area, buf);
-            track_y += this_height;
+                    .collect();
+                TrackInput { label, units: units_entries, intrinsic_height }
+            })
+            .collect();
+        FlamegraphWidget {
+            tracks: track_inputs,
+            total_duration: visible_duration,
+            start_time,
+            scroll_offset: self.vertical_scroll,
+            cell_map: &mut self.cell_span_map,
         }
+        .render(graph_area, buf);
 
         if let Some((ui, si)) = self.selected_indexes {
             if let Some(span) = self.units[ui].spans.get(si) {
@@ -173,7 +160,19 @@ impl Default for App {
     fn default() -> Self {
         let cli = cli::Cli::parse();
         let units: Vec<Unit> = get_units(&cli.build_dir);
-        let tracks = schedule_units(&units);
+        let mut tracks = schedule_units(&units);
+        // Sort tracks: longest total duration (sum of root span durations) first.
+        tracks.sort_by(|a, b| {
+            let dur = |track: &Vec<usize>| -> f64 {
+                track
+                    .iter()
+                    .filter_map(|&ui| units.get(ui))
+                    .filter_map(|u| u.spans.first())
+                    .map(|s| s.duration)
+                    .sum()
+            };
+            dur(b).partial_cmp(&dur(a)).unwrap_or(std::cmp::Ordering::Equal)
+        });
         Self {
             units,
             tracks,
@@ -182,6 +181,7 @@ impl Default for App {
             selected_indexes: None,
             cell_span_map: HashMap::new(),
             order_by: OrderBy::StartTime,
+            vertical_scroll: 0,
         }
     }
 }
@@ -440,14 +440,10 @@ impl App {
                         }
                     }
                     MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => {
-                        let step = self.visible_duration() * 0.1;
-                        self.start_time = (self.start_time - step).max(0.0);
+                        self.vertical_scroll = self.vertical_scroll.saturating_sub(3);
                     }
-                    // Plain scroll down / right → pan forward
                     MouseEventKind::ScrollDown | MouseEventKind::ScrollRight => {
-                        let step = self.visible_duration() * 0.1;
-                        let max_start = (self.total_duration() - self.visible_duration()).max(0.0);
-                        self.start_time = (self.start_time + step).min(max_start);
+                        self.vertical_scroll = self.vertical_scroll.saturating_add(3);
                     }
                     _ => {}
                 },

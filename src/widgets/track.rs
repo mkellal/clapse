@@ -44,6 +44,8 @@ pub struct TrackWidget<'a> {
     pub units: Vec<UnitEntry<'a>>,
     pub total_duration: f64,
     pub start_time: f64,
+    /// Rows to skip from the top of this track (for partial-track scrolling).
+    pub row_skip: u16,
     /// Shared cell map: terminal cell (col, row) → (unit_index, span_index).
     pub cell_map: &'a mut HashMap<(u16, u16), (usize, usize)>,
 }
@@ -54,35 +56,28 @@ impl<'a> Widget for TrackWidget<'a> {
             return;
         }
 
-        let content_area = if let Some(label) = self.label {
+        let label_rows: u16 = if self.label.is_some() { 1 } else { 0 };
+        let (content_area, unit_row_skip) = if self.row_skip < label_rows {
+            // Label row is visible (row_skip == 0 since label_rows <= 1).
             let y = area.y;
             let muted = Style::default().fg(Color::DarkGray);
-            // "─ Label ─────────────────"
-            // Left padding: one mid-line char + space before the label.
             let prefix = "─ ";
             let suffix_char = '─';
-            let label_with_space = format!("{} ", label);
+            let label_with_space = format!("{} ", self.label.unwrap_or(""));
             let prefix_len = prefix.chars().count() as u16;
             let label_len = label_with_space.chars().count() as u16;
             let used = prefix_len + label_len;
             let suffix_len = area.width.saturating_sub(used);
-
             buf.set_string(area.x, y, prefix, muted);
-            buf.set_stringn(
-                area.x + prefix_len,
-                y,
-                &label_with_space,
-                label_len as usize,
-                muted,
-            );
-            let suffix: String = std::iter::repeat(suffix_char)
-                .take(suffix_len as usize)
-                .collect();
+            buf.set_stringn(area.x + prefix_len, y, &label_with_space, label_len as usize, muted);
+            let suffix: String = std::iter::repeat(suffix_char).take(suffix_len as usize).collect();
             buf.set_string(area.x + prefix_len + label_len, y, &suffix, muted);
-
-            Rect::new(area.x, area.y + 1, area.width, area.height.saturating_sub(1))
+            let content_y = area.y + label_rows;
+            let content_h = area.height.saturating_sub(label_rows);
+            (Rect::new(area.x, content_y, area.width, content_h), 0u16)
         } else {
-            area
+            // Label is scrolled off; pass remaining skip to UnitWidget.
+            (area, self.row_skip - label_rows)
         };
 
         for entry in self.units.into_iter() {
@@ -93,6 +88,7 @@ impl<'a> Widget for TrackWidget<'a> {
                 total_duration: self.total_duration,
                 start_time: self.start_time,
                 unit_index: entry.unit_index,
+                row_skip: unit_row_skip,
                 cell_map: self.cell_map,
             }
             .render(content_area, buf);
