@@ -68,11 +68,20 @@ impl<'a> Widget for TrackWidget<'a> {
             return;
         }
 
+        let has_selected_unit = self
+            .units
+            .iter()
+            .any(|entry| entry.selected_span_index.is_some());
+
         let label_rows: u16 = if self.label.is_some() { 1 } else { 0 };
         let (content_area, unit_row_skip) = if self.row_skip < label_rows {
             // Label row is visible (row_skip == 0 since label_rows <= 1).
             let y = area.y;
-            let muted = Style::default().fg(Color::DarkGray);
+            let label_style = if has_selected_unit {
+                Style::default().fg(Color::White)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
             let prefix = "─ ";
             let suffix_char = '─';
             let label_with_space = format!("{} ", self.label.unwrap_or(""));
@@ -80,18 +89,18 @@ impl<'a> Widget for TrackWidget<'a> {
             let label_len = label_with_space.chars().count() as u16;
             let used = prefix_len + label_len;
             let suffix_len = area.width.saturating_sub(used);
-            buf.set_string(area.x, y, prefix, muted);
+            buf.set_string(area.x, y, prefix, label_style);
             buf.set_stringn(
                 area.x + prefix_len,
                 y,
                 &label_with_space,
                 label_len as usize,
-                muted,
+                label_style,
             );
             let suffix: String = std::iter::repeat(suffix_char)
                 .take(suffix_len as usize)
                 .collect();
-            buf.set_string(area.x + prefix_len + label_len, y, &suffix, muted);
+            buf.set_string(area.x + prefix_len + label_len, y, &suffix, label_style);
             let content_y = area.y + label_rows;
             let content_h = area.height.saturating_sub(label_rows);
             (Rect::new(area.x, content_y, area.width, content_h), 0u16)
