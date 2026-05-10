@@ -11,11 +11,11 @@ use std::collections::HashMap;
 pub mod span;
 pub mod unit;
 use self::unit::Unit;
-use crate::app::unit::{FollowingSpanDirection, HorizontalDirection, OrderBy, get_units};
+use crate::app::unit::{FollowingSpanDirection, HorizontalDirection, OrderBy, get_units, schedule_units};
 use crate::cli;
 use crate::widgets::span_details::SpanDetails;
 use crate::widgets::time_range::DurationRange;
-use crate::widgets::track::{TrackWidget, UnitEntry};
+use crate::widgets::track::{TrackWidget, UnitEntry, thread_content_height};
 
 /// RAII guard that enables mouse capture on creation and disables it on drop.
 struct MouseCaptureGuard;
@@ -35,6 +35,8 @@ impl Drop for MouseCaptureGuard {
 
 pub struct App {
     units: Vec<Unit>,
+    /// Thread schedule: each entry is a list of unit indices (into `units`).
+    threads: Vec<Vec<usize>>,
     zoom: f64,
     start_time: f64,
     selected_indexes: Option<(usize, usize)>, // (unit index, span index)
@@ -47,10 +49,11 @@ impl Widget for &mut App {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let total_duration = self
             .units
-            .first()
-            .and_then(|u| u.spans.first())
-            .map(|s| s.duration)
-            .unwrap_or(0.0);
+            .iter()
+            .filter_map(|u| u.spans.first())
+            .filter(|r| r.duration.is_finite())
+            .map(|r| r.start_time + r.duration)
+            .fold(0.0f64, f64::max);
         let visible_duration = total_duration / self.zoom;
 
         let scrollbar_height = 2;
@@ -71,9 +74,24 @@ impl Widget for &mut App {
         let graph_height = area
             .height
             .saturating_sub(scrollbar_height + details_height);
+        let num_tracks = self.threads.len().max(1) as u16;
+        // Compute the intrinsic height of each track (content rows + label row).
+        let label_height: u16 = 1;
+        let track_heights: Vec<u16> = self
+            .threads
+            .iter()
+            .map(|t| thread_content_height(t, &self.units) + label_height)
+            .collect();
+        let total_tracks_height: u16 = track_heights.iter().copied().sum();
+        // Scale down uniformly if tracks don't fit the available graph area.
+        let scale = if total_tracks_height > 0 && total_tracks_height > graph_height {
+            graph_height as f64 / total_tracks_height as f64
+        } else {
+            1.0
+        };
+        let _ = num_tracks; // used indirectly via track_heights
 
         let scrollbar_area = Rect::new(area.x, area.y, area.width, scrollbar_height);
-        let graph_area = Rect::new(area.x, area.y + scrollbar_height, area.width, graph_height);
         let details_area = Rect::new(
             area.x,
             area.y + scrollbar_height + graph_height,
@@ -81,7 +99,6 @@ impl Widget for &mut App {
             details_height,
         );
 
-        let selected_span_index = self.selected_indexes.map(|(_, si)| si);
         let start_time = self.start_time;
         let scrollbar = DurationRange {
             total_duration,
@@ -90,24 +107,55 @@ impl Widget for &mut App {
         };
         scrollbar.render(scrollbar_area, buf);
 
-        if let Some(unit) = self.units.first_mut() {
-            self.cell_span_map.clear();
-            let views = match self.order_by {
-                OrderBy::StartTime => unit.views_by_start_time.as_slice(),
-                OrderBy::Duration => unit.views_by_duration.as_slice(),
-            };
+        self.cell_span_map.clear();
+        let mut track_y = area.y + scrollbar_height;
+        for (track_idx, thread_units) in self.threads.iter().enumerate() {
+            let intrinsic = *track_heights.get(track_idx).unwrap_or(&1);
+            let this_height = ((intrinsic as f64 * scale).round() as u16).max(1);
+            // Clamp so we don't exceed the graph area.
+            let remaining = (area.y + scrollbar_height + graph_height).saturating_sub(track_y);
+            let this_height = this_height.min(remaining);
+            if this_height == 0 {
+                break;
+            }
+            let track_area = Rect::new(area.x, track_y, area.width, this_height);
+            let label = format!("Thread {}", track_idx);
+            let order_by = self.order_by;
+            let units_entries: Vec<UnitEntry> = thread_units
+                .iter()
+                .filter_map(|&ui| {
+                    let unit = self.units.get_mut(ui)?;
+                    let views: &[crate::app::unit::SpanView] = match order_by {
+                        OrderBy::StartTime => unit.views_by_start_time.as_slice(),
+                        OrderBy::Duration => unit.views_by_duration.as_slice(),
+                    };
+                    let selected_span_index = self
+                        .selected_indexes
+                        .filter(|&(suu, _)| suu == ui)
+                        .map(|(_, si)| si);
+                    // Safety: we hold a unique &mut self, so we can extend the
+                    // lifetime of views to match the unit borrow.
+                    let views: &'_ [crate::app::unit::SpanView] =
+                        unsafe { std::mem::transmute(views) };
+                    let spans: &'_ mut [crate::app::span::Span] =
+                        unsafe { std::mem::transmute(unit.spans.as_mut_slice()) };
+                    Some(UnitEntry {
+                        unit_index: ui,
+                        spans,
+                        views,
+                        selected_span_index,
+                    })
+                })
+                .collect();
             TrackWidget {
-                label: Some("Thread 0"),
-                units: vec![UnitEntry {
-                    spans: &mut unit.spans,
-                    views,
-                    selected_span_index,
-                }],
+                label: Some(label.as_str()),
+                units: units_entries,
                 total_duration: visible_duration,
                 start_time,
                 cell_map: &mut self.cell_span_map,
             }
-            .render(graph_area, buf);
+            .render(track_area, buf);
+            track_y += this_height;
         }
 
         if let Some((ui, si)) = self.selected_indexes {
@@ -125,8 +173,10 @@ impl Default for App {
     fn default() -> Self {
         let cli = cli::Cli::parse();
         let units: Vec<Unit> = get_units(&cli.build_dir);
+        let threads = schedule_units(&units);
         Self {
             units,
+            threads,
             zoom: 1.0,
             start_time: 0.0,
             selected_indexes: None,
