@@ -94,6 +94,9 @@ pub struct SpanWidget<'a> {
     pub allowed_area: Rect,
     pub time_per_col: f64,
     pub start_time: f64,
+    /// Effective start time for positioning. Equals span.start_time in StartTime mode;
+    /// overridden to a virtual position in Duration mode.
+    pub effective_start: f64,
     pub selected_span_index: Option<usize>,
 }
 
@@ -117,8 +120,8 @@ impl<'a> SpanWidget<'a> {
         };
         let fa = self.flamegraph_area;
 
-        let start_float = (span.start_time - self.start_time) / self.time_per_col;
-        let end_float = (span.start_time + span.duration - self.start_time) / self.time_per_col;
+        let start_float = (self.effective_start - self.start_time) / self.time_per_col;
+        let end_float = (self.effective_start + span.duration - self.start_time) / self.time_per_col;
         let start_col = start_float.floor() as i32;
         let end_col = end_float.floor() as i32;
         let startfrac = start_float.fract();

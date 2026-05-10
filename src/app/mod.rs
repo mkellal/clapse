@@ -15,7 +15,7 @@ use crate::app::unit::{FollowingSpanDirection, HorizontalDirection, get_units};
 use crate::cli;
 use crate::widgets::span_details::SpanDetails;
 use crate::widgets::time_range::DurationRange;
-use crate::widgets::unit::UnitWidget;
+use crate::widgets::unit::{OrderBy, UnitWidget};
 
 /// RAII guard that enables mouse capture on creation and disables it on drop.
 struct MouseCaptureGuard;
@@ -40,6 +40,7 @@ pub struct App {
     selected_indexes: Option<(usize, usize)>, // (unit index, span index)
     /// Maps terminal cell (col, row) → span index within unit 0. Rebuilt every frame.
     cell_span_map: HashMap<(u16, u16), usize>,
+    order_by: OrderBy,
 }
 
 impl Widget for &mut App {
@@ -96,6 +97,7 @@ impl Widget for &mut App {
                 selected_span_index,
                 total_duration: visible_duration,
                 start_time,
+                order_by: self.order_by,
                 cell_map: &mut self.cell_span_map,
             }
             .render(graph_area, buf);
@@ -122,6 +124,7 @@ impl Default for App {
             start_time: 0.0,
             selected_indexes: None,
             cell_span_map: HashMap::new(),
+            order_by: OrderBy::StartTime,
         }
     }
 }
@@ -159,16 +162,22 @@ impl App {
                     FollowingSpanDirection::Next => HorizontalDirection::Next,
                     _ => HorizontalDirection::Previous,
                 };
-                unit.get_following_span_index(si, horiz, true)
+                unit.get_following_span_index(si, horiz, true, self.order_by)
             }
             FollowingSpanDirection::Parent => unit
                 .get_parent_span(&unit.spans[si])
                 .map(|s| s.index_in_unit),
-            FollowingSpanDirection::Child => unit
-                .get_child_spans(&unit.spans[si], true)
-                .into_iter()
-                .next()
-                .map(|s| s.index_in_unit),
+            FollowingSpanDirection::Child => {
+                let mut children = unit.get_child_spans(&unit.spans[si], true);
+                if self.order_by == OrderBy::Duration {
+                    children.sort_by(|a, b| {
+                        b.duration
+                            .partial_cmp(&a.duration)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                }
+                children.into_iter().next().map(|s| s.index_in_unit)
+            }
         };
         if let Some(next_si) = new_si {
             self.selected_indexes = Some((ui, next_si));
@@ -271,6 +280,12 @@ impl App {
                         }
                         KeyCode::Char(' ') => self.zoom_to_selected(),
                         KeyCode::Esc => self.selected_indexes = None,
+                        KeyCode::Char('s') => {
+                            self.order_by = match self.order_by {
+                                OrderBy::StartTime => OrderBy::Duration,
+                                OrderBy::Duration => OrderBy::StartTime,
+                            };
+                        }
                         _ => {}
                     }
                 }

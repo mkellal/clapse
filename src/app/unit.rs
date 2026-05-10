@@ -7,6 +7,7 @@ use crate::{
         event::parse_trace_file,
         file::{clean_trace_file_path, get_trace_files},
     },
+    widgets::unit::OrderBy,
 };
 
 const MAX_LABEL_LEN: usize = 30;
@@ -113,12 +114,20 @@ impl Unit {
         span_index: usize,
         direction: HorizontalDirection,
         only_displayed: bool,
+        order_by: OrderBy,
     ) -> Option<usize> {
         // get sibling spans (those with the same parent) and find the one immediately after `span`.
         let span = self.spans.get(span_index)?;
         let parent_index = span.contained_by_index?;
         let parent = self.spans.get(parent_index)?;
-        let siblings = self.get_child_spans(parent, only_displayed);
+        let mut siblings = self.get_child_spans(parent, only_displayed);
+        if order_by == OrderBy::Duration {
+            siblings.sort_by(|a, b| {
+                b.duration
+                    .partial_cmp(&a.duration)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
         let pos = siblings
             .iter()
             .position(|&s| s.index_in_unit == span_index)?;
@@ -135,7 +144,7 @@ impl Unit {
                 if parent.contained_by_index.is_none() {
                     None
                 } else {
-                    self.get_following_span_index(parent_index, direction, only_displayed)
+                    self.get_following_span_index(parent_index, direction, only_displayed, order_by)
                 }
             }
         }

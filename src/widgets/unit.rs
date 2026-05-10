@@ -5,11 +5,109 @@ use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
 use crate::app::span::Span;
 use crate::widgets::span::{SpanWidget, SubcellAlign, flush_subcell_tracker};
 
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum OrderBy {
+    #[default]
+    StartTime,
+    Duration,
+}
+
+/// A lightweight render entry with the computed positioning data for one span.
+/// Does not borrow the spans slice — the loop indexes self.spans[span_index] directly.
+struct SpanEntry {
+    /// Index into the original spans slice.
+    span_index: usize,
+    /// The start time to use for x-positioning (may differ from span.start_time in Duration mode).
+    effective_start: f64,
+    /// Position among siblings, used for checkerboard coloring.
+    index_in_depth: usize,
+}
+
+// ---------------------------------------------------------------------------
+// Entry-list builders
+// ---------------------------------------------------------------------------
+
+fn entries_start_time(spans: &[Span]) -> Vec<SpanEntry> {
+    (0..spans.len())
+        .map(|i| {
+            let index_in_depth = spans[i]
+                .contained_by_index
+                .and_then(|pi| {
+                    spans[pi]
+                        .contains_indices
+                        .iter()
+                        .position(|&ci| ci == i)
+                })
+                .unwrap_or(0);
+            SpanEntry {
+                span_index: i,
+                effective_start: spans[i].start_time,
+                index_in_depth,
+            }
+        })
+        .collect()
+}
+
+fn entries_duration(spans: &[Span]) -> Vec<SpanEntry> {
+    let mut entries = Vec::with_capacity(spans.len());
+
+    let mut roots: Vec<usize> = (0..spans.len())
+        .filter(|&i| spans[i].contained_by_index.is_none())
+        .collect();
+    roots.sort_by(|&a, &b| {
+        spans[b]
+            .duration
+            .partial_cmp(&spans[a].duration)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut cursor = 0.0f64;
+    for (sib_pos, r) in roots.iter().enumerate() {
+        visit_duration(spans, *r, cursor, sib_pos, &mut entries);
+        cursor += spans[*r].duration;
+    }
+
+    entries
+}
+
+fn visit_duration(
+    spans: &[Span],
+    i: usize,
+    virtual_start: f64,
+    index_in_depth: usize,
+    entries: &mut Vec<SpanEntry>,
+) {
+    entries.push(SpanEntry {
+        span_index: i,
+        effective_start: virtual_start,
+        index_in_depth,
+    });
+
+    let mut children = spans[i].contains_indices.clone();
+    children.sort_by(|&a, &b| {
+        spans[b]
+            .duration
+            .partial_cmp(&spans[a].duration)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut cursor = virtual_start;
+    for (sib_pos, c) in children.iter().enumerate() {
+        visit_duration(spans, *c, cursor, sib_pos, entries);
+        cursor += spans[*c].duration;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Widget
+// ---------------------------------------------------------------------------
+
 pub struct UnitWidget<'a> {
     pub spans: &'a mut [Span],
     pub selected_span_index: Option<usize>,
     pub total_duration: f64,
     pub start_time: f64,
+    pub order_by: OrderBy,
     // terminal cell (col, row) -> span index.
     pub cell_map: &'a mut HashMap<(u16, u16), usize>,
 }
@@ -24,36 +122,43 @@ impl<'a> Widget for UnitWidget<'a> {
         let mut subcell_tracker: HashMap<(u16, u16), (f64, SubcellAlign, Color, usize)> =
             HashMap::new();
 
-        // Per-span core bounds (core_x_start, core_x_end) used to clamp children.
-        // A span's children are only rendered if this entry is Some.
+        // Per-span core bounds indexed by original span index.
         let mut core_bounds: Vec<Option<(u16, u16)>> = vec![None; self.spans.len()];
 
-        for i in 0..self.spans.len() {
-            // Reset render state from the previous frame
-            self.spans[i].has_core_cells = false;
-            self.spans[i].was_displayed = false;
+        // Reset render state for all spans before iterating.
+        for span in self.spans.iter_mut() {
+            span.has_core_cells = false;
+            span.was_displayed = false;
+        }
+
+        let entries = match self.order_by {
+            OrderBy::StartTime => entries_start_time(self.spans),
+            OrderBy::Duration => entries_duration(self.spans),
+        };
+
+        for entry in &entries {
+            let i = entry.span_index;
+            let span = &self.spans[i];
 
             // Determine the x-clamp range from the parent's core bounds.
             // Skip this span entirely if the parent had no core cells.
-            let clamp: (u16, u16) = if let Some(pi) = self.spans[i].contained_by_index {
+            let clamp: (u16, u16) = if let Some(pi) = span.contained_by_index {
                 match core_bounds[pi] {
                     Some(b) => b,
                     None => continue, // parent had no core cells
                 }
             } else {
-                // Root span: unclamped
                 (area.x, area.right())
             };
 
-            let depth = self.spans[i].depth;
+            let depth = span.depth;
             let y = area.y + depth as u16;
             if y >= area.bottom() {
                 continue;
             }
 
-            let sf = (self.spans[i].start_time - self.start_time) / time_per_col;
-            let ef = (self.spans[i].start_time + self.spans[i].duration - self.start_time)
-                / time_per_col;
+            let sf = (entry.effective_start - self.start_time) / time_per_col;
+            let ef = (entry.effective_start + span.duration - self.start_time) / time_per_col;
             let x_start = (area.x as i32 + sf.round() as i32)
                 .max(clamp.0 as i32)
                 .min(clamp.1 as i32) as u16;
@@ -64,31 +169,20 @@ impl<'a> Widget for UnitWidget<'a> {
 
             let allowed_area = Rect::new(x_start, y, width, 1);
 
-            // Sibling position for checkerboard coloring
-            let index_in_depth: usize = if let Some(pi) = self.spans[i].contained_by_index {
-                self.spans[pi]
-                    .contains_indices
-                    .iter()
-                    .position(|&ci| ci == i)
-                    .unwrap_or(0)
-            } else {
-                0
-            };
-
             let widget = SpanWidget {
-                span: &self.spans[i],
+                span,
                 span_index: i,
-                index_in_depth,
+                index_in_depth: entry.index_in_depth,
                 flamegraph_area: area,
                 allowed_area,
                 time_per_col,
                 start_time: self.start_time,
+                effective_start: entry.effective_start,
                 selected_span_index: self.selected_span_index,
             };
 
             let span_core_bounds = widget.render_with_tracker(buf, &mut subcell_tracker);
 
-            // Record core cells in the cell map immediately.
             if let Some((cx_start, cx_end)) = span_core_bounds {
                 for x in cx_start..cx_end {
                     self.cell_map.insert((x, y), i);
@@ -98,14 +192,13 @@ impl<'a> Widget for UnitWidget<'a> {
             core_bounds[i] = span_core_bounds;
         }
 
-        // Settle subcell claims: only spans that actually won a cell are marked displayed.
+        // Settle subcell claims.
         let subcell_winners = flush_subcell_tracker(buf, &subcell_tracker);
         for i in 0..self.spans.len() {
             if self.spans[i].has_core_cells || subcell_winners.values().any(|&si| si == i) {
                 self.spans[i].was_displayed = true;
             }
         }
-        // Merge subcell winners into cell map.
         self.cell_map.extend(subcell_winners);
     }
 }
