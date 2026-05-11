@@ -21,98 +21,20 @@ pub enum OrderBy {
 }
 
 /// Positioning data for one span, precomputed for a given OrderBy mode.
+#[derive(Clone)]
 pub struct SpanView {
-    /// Index into the unit's spans slice.
+    /// Global index into the flat spans array.
     pub span_index: usize,
     /// Start time to use for x-positioning.
     pub effective_start: f64,
     /// Position among siblings (for checkerboard coloring).
     pub index_in_parent: usize,
-}
-
-fn build_views_by_start_time(spans: &[Span]) -> Vec<SpanView> {
-    (0..spans.len())
-        .map(|i| {
-            let index_in_parent = spans[i]
-                .parent_index
-                .and_then(|pi| spans[pi].children_indices.iter().position(|&ci| ci == i))
-                .unwrap_or(0);
-            SpanView {
-                span_index: i,
-                effective_start: spans[i].start_time,
-                index_in_parent,
-            }
-        })
-        .collect()
-}
-
-fn build_views_by_duration(spans: &[Span]) -> Vec<SpanView> {
-    let mut entries = Vec::with_capacity(spans.len());
-
-    let mut roots: Vec<usize> = (0..spans.len())
-        .filter(|&i| spans[i].parent_index.is_none())
-        .collect();
-    roots.sort_by(|&a, &b| {
-        spans[b]
-            .duration
-            .partial_cmp(&spans[a].duration)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    let mut cursor = 0.0f64;
-    for (sib_pos, &r) in roots.iter().enumerate() {
-        visit_duration(spans, r, cursor, sib_pos, &mut entries);
-        cursor += spans[r].duration;
-    }
-
-    entries
-}
-
-fn visit_duration(
-    spans: &[Span],
-    i: usize,
-    virtual_start: f64,
-    index_in_parent: usize,
-    entries: &mut Vec<SpanView>,
-) {
-    entries.push(SpanView {
-        span_index: i,
-        effective_start: virtual_start,
-        index_in_parent,
-    });
-
-    let mut children = spans[i].children_indices.clone();
-    children.sort_by(|&a, &b| {
-        spans[b]
-            .duration
-            .partial_cmp(&spans[a].duration)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    let mut cursor = virtual_start;
-    for (sib_pos, &c) in children.iter().enumerate() {
-        visit_duration(spans, c, cursor, sib_pos, entries);
-        cursor += spans[c].duration;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Unit
-// ---------------------------------------------------------------------------
-
-pub struct Unit {
-    pub spans: Vec<Span>,
-    pub views_by_start_time: Vec<SpanView>,
-    pub views_by_duration: Vec<SpanView>,
-}
-
-impl Unit {
-    pub fn views(&self, order_by: OrderBy) -> &[SpanView] {
-        match order_by {
-            OrderBy::StartTime => &self.views_by_start_time,
-            OrderBy::Duration => &self.views_by_duration,
-        }
-    }
+    /// Position of the root among roots in its track (for coloring).
+    pub position_in_track: usize,
+    /// Set after each render: true if this span occupied at least one full terminal cell.
+    pub has_core_cells: bool,
+    /// Set after each render: true if this span was rendered at all (including partial chars).
+    pub was_displayed: bool,
 }
 
 pub enum FollowingSpanDirection {
@@ -129,51 +51,188 @@ pub enum HorizontalDirection {
     Previous,
 }
 
-impl Unit {
-    pub fn get_parent_span(&self, span: &Span) -> Option<&Span> {
-        span.parent_index
-            .and_then(|parent_index| self.spans.get(parent_index))
-    }
+// ---------------------------------------------------------------------------
+// Navigation helpers (standalone, work with global flat spans array)
+// ---------------------------------------------------------------------------
 
-    /// Returns the index of the next/previous sibling of `span_index` in the
-    /// order defined by `views`, considering only displayed spans.
-    pub fn get_following_span_index(
-        &self,
-        span_index: usize,
-        direction: HorizontalDirection,
-        views: &[SpanView],
-    ) -> Option<usize> {
-        let span = self.spans.get(span_index)?;
-        let parent_index = span.parent_index?;
-        let parent = self.spans.get(parent_index)?;
+/// Returns the index of the next/previous sibling of `span_index` in `views`,
+/// considering only displayed spans.
+pub fn get_following_span_index(
+    spans: &[Span],
+    views: &[SpanView],
+    span_index: usize,
+    direction: HorizontalDirection,
+) -> Option<usize> {
+    let span = spans.get(span_index)?;
+    let parent_index = span.parent_index?;
+    let parent = spans.get(parent_index)?;
 
-        // Siblings in display order, filtered to only those that were rendered.
-        let siblings: Vec<usize> = views
-            .iter()
-            .filter(|e| {
-                self.spans[e.span_index].parent_index == Some(parent_index)
-                    && self.spans[e.span_index].was_displayed
-            })
-            .map(|e| e.span_index)
-            .collect();
+    let mut seen = std::collections::HashSet::new();
+    let siblings: Vec<usize> = views
+        .iter()
+        .filter(|e| {
+            spans[e.span_index].parent_index == Some(parent_index)
+                && e.was_displayed
+        })
+        .map(|e| e.span_index)
+        .filter(|&si| seen.insert(si))
+        .collect();
 
-        let pos = siblings.iter().position(|&si| si == span_index)?;
-        let shift = match direction {
-            HorizontalDirection::Next => 1,
-            HorizontalDirection::Previous => -1,
-        };
-        let new_pos = (pos as isize + shift) as usize;
-        match siblings.get(new_pos).copied() {
-            Some(si) => Some(si),
-            None => {
-                if parent.parent_index.is_none() {
-                    None
-                } else {
-                    self.get_following_span_index(parent_index, direction, views)
-                }
+    let pos = siblings.iter().position(|&si| si == span_index)?;
+    let shift: isize = match direction {
+        HorizontalDirection::Next => 1,
+        HorizontalDirection::Previous => -1,
+    };
+    let new_pos = (pos as isize + shift) as usize;
+    match siblings.get(new_pos).copied() {
+        Some(si) => Some(si),
+        None => {
+            if parent.parent_index.is_none() {
+                None
+            } else {
+                get_following_span_index(spans, views, parent_index, direction)
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// View building
+// ---------------------------------------------------------------------------
+
+fn collect_subtree(spans: &[Span], root: usize) -> Vec<usize> {
+    let mut result = Vec::new();
+    let mut stack = vec![root];
+    while let Some(i) = stack.pop() {
+        result.push(i);
+        for &ci in &spans[i].children_indices {
+            stack.push(ci);
+        }
+    }
+    result
+}
+
+fn build_subtree_start_time(
+    spans: &[Span],
+    root: usize,
+    position_in_track: usize,
+) -> Vec<SpanView> {
+    let mut indices = collect_subtree(spans, root);
+    indices.sort_unstable_by(|&a, &b| {
+        spans[a]
+            .start_time
+            .partial_cmp(&spans[b].start_time)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    indices
+        .into_iter()
+        .map(|i| {
+            let index_in_parent = spans[i]
+                .parent_index
+                .and_then(|pi| spans[pi].children_indices.iter().position(|&ci| ci == i))
+                .unwrap_or(0);
+            SpanView {
+                span_index: i,
+                effective_start: spans[i].start_time,
+                index_in_parent,
+                position_in_track,
+                has_core_cells: false,
+                was_displayed: false,
+            }
+        })
+        .collect()
+}
+
+fn visit_duration_global(
+    spans: &[Span],
+    i: usize,
+    virtual_start: f64,
+    index_in_parent: usize,
+    root_span_index: usize,
+    position_in_track: usize,
+    entries: &mut Vec<SpanView>,
+) {
+    entries.push(SpanView {
+        span_index: i,
+        effective_start: virtual_start,
+        index_in_parent,
+        position_in_track,
+        has_core_cells: false,
+        was_displayed: false,
+    });
+
+    let mut children = spans[i].children_indices.clone();
+    children.sort_unstable_by(|&a, &b| {
+        spans[b]
+            .duration
+            .partial_cmp(&spans[a].duration)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut cursor = virtual_start;
+    for (sib_pos, &c) in children.iter().enumerate() {
+        visit_duration_global(
+            spans,
+            c,
+            cursor,
+            sib_pos,
+            root_span_index,
+            position_in_track,
+            entries,
+        );
+        cursor += spans[c].duration;
+    }
+}
+
+/// Build both orderings for all tracks from the flat spans array.
+///
+/// `track_roots[i]` is the list of root span global indices for track i.
+/// Returns `(tracks_by_start_time, tracks_by_duration)`.
+pub fn build_track_views(
+    spans: &[Span],
+    track_roots: &[Vec<usize>],
+) -> (Vec<Vec<SpanView>>, Vec<Vec<SpanView>>) {
+    let by_start_time: Vec<Vec<SpanView>> = track_roots
+        .iter()
+        .map(|roots| {
+            roots
+                .iter()
+                .enumerate()
+                .flat_map(|(pos, &root)| build_subtree_start_time(spans, root, pos))
+                .collect()
+        })
+        .collect();
+
+    let by_duration: Vec<Vec<SpanView>> = track_roots
+        .iter()
+        .map(|roots| {
+            let mut sorted_roots: Vec<usize> = roots.clone();
+            sorted_roots.sort_unstable_by(|&a, &b| {
+                spans[b]
+                    .duration
+                    .partial_cmp(&spans[a].duration)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            // Build a position_in_track map from the original roots order.
+            let pos_map: std::collections::HashMap<usize, usize> = roots
+                .iter()
+                .enumerate()
+                .map(|(pos, &root)| (root, pos))
+                .collect();
+
+            let mut views = Vec::new();
+            let mut cursor = 0.0f64;
+            for &root in &sorted_roots {
+                let position_in_track = pos_map.get(&root).copied().unwrap_or(0);
+                visit_duration_global(spans, root, cursor, 0, root, position_in_track, &mut views);
+                cursor += spans[root].duration;
+            }
+            views
+        })
+        .collect();
+
+    (by_start_time, by_duration)
 }
 
 // ---------------------------------------------------------------------------
@@ -182,23 +241,12 @@ impl Unit {
 
 /// A build record parsed from a `.ninja_log` file.
 pub struct UnitTrace {
-    /// Output path of the build target (used as the unit identifier).
     pub identifier: String,
-    /// Build start time in milliseconds.
     pub start_ms: u64,
-    /// Build end time in milliseconds.
     pub end_ms: u64,
 }
 
-/// Parses a ninja log file (`.ninja_log`) and returns one `UnitTrace` per
-/// entry. Duplicate outputs are de-duplicated by keeping the last occurrence
-/// (matching ninja's own behaviour).
-///
-/// The ninja log v5 format is tab-separated:
-/// ```text
-/// # ninja log v5
-/// <start_ms>\t<end_ms>\t<restat_mtime>\t<output>\t<cmdhash>
-/// ```
+/// Parses a ninja log file (`.ninja_log`) and returns one `UnitTrace` per entry.
 pub fn parse_ninja_log(path: &Path) -> Option<Vec<UnitTrace>> {
     let content = std::fs::read_to_string(path).ok()?;
     let mut lines = content.lines();
@@ -208,12 +256,10 @@ pub fn parse_ninja_log(path: &Path) -> Option<Vec<UnitTrace>> {
         return None;
     }
 
-    // Use a map keyed by identifier to keep only the last entry per output,
-    // mirroring ninja's own de-duplication behaviour.
-    let mut seen: std::collections::HashMap<String, UnitTrace> = std::collections::HashMap::new();
+    let mut seen: std::collections::HashMap<String, UnitTrace> =
+        std::collections::HashMap::new();
 
     for line in lines {
-        // Skip blank lines or comment lines.
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
@@ -238,14 +284,20 @@ pub fn parse_ninja_log(path: &Path) -> Option<Vec<UnitTrace>> {
     Some(traces)
 }
 
-pub fn get_units(build_dir: &std::path::PathBuf) -> Vec<Unit> {
-    // Parse the ninja log once before the parallel section so every track
-    // can look up timings without re-reading the file.
+// ---------------------------------------------------------------------------
+// Loading all spans into a flat Vec<Span>
+// ---------------------------------------------------------------------------
+
+/// Load all trace files in `build_dir` and return a single flat `Vec<Span>`
+/// with globally-consistent parent/children indices.
+pub fn load_spans(build_dir: &std::path::PathBuf) -> Vec<Span> {
     let ninja_log_path = build_dir.join(".ninja_log");
     let ninja_traces: Vec<UnitTrace> = parse_ninja_log(&ninja_log_path).unwrap_or_default();
 
     let trace_files = get_trace_files(build_dir);
-    trace_files
+
+    // Build one Vec<Span> per trace file in parallel (local indices 0..n).
+    let unit_spans_list: Vec<Vec<Span>> = trace_files
         .par_iter()
         .filter_map(|trace_file| {
             let name = clean_trace_file_path(trace_file, build_dir)
@@ -254,18 +306,12 @@ pub fn get_units(build_dir: &std::path::PathBuf) -> Vec<Unit> {
                 .to_string();
             let identifier = trace_file.with_extension("o").to_string_lossy().to_string();
 
-            // Match against ninja log: unit identifier must end with the
-            // ninja trace identifier (e.g. "CMakeFiles/foo.dir/foo.cpp.o").
             let ninja_match = ninja_traces
                 .iter()
                 .find(|nt| identifier.ends_with(&nt.identifier));
 
-            let data = match parse_trace_file(trace_file) {
-                Some(d) => d,
-                None => return None,
-            };
+            let data = parse_trace_file(trace_file)?;
 
-            // Ninja log times are in ms; trace timestamps are in µs.
             let (unit_start, unit_duration) = match ninja_match {
                 Some(nt) => (
                     nt.start_ms as f64 * 1000.0,
@@ -277,71 +323,68 @@ pub fn get_units(build_dir: &std::path::PathBuf) -> Vec<Unit> {
             let mut spans = vec![Span {
                 type_: SpanType::Unit,
                 identifier,
-                label: name.clone(),
+                label: name,
                 sublabel: Some("Translation Unit".to_string()),
                 start_time: unit_start,
                 duration: unit_duration,
                 parent_index: None,
                 children_indices: Vec::new(),
-                index_in_unit: 0,
+                root_span_index: 0,
                 depth: 0,
-                has_core_cells: false,
-                was_displayed: false,
             }];
 
             add_spans(&mut spans, &data, build_dir);
 
-            let views_start_time = build_views_by_start_time(&spans);
-            let views_duration = build_views_by_duration(&spans);
-
-            Some(Unit {
-                spans,
-                views_by_start_time: views_start_time,
-                views_by_duration: views_duration,
-            })
+            Some(spans)
         })
-        .collect()
+        .collect();
+
+    // Merge into flat array, adjusting all indices by the unit's offset.
+    let mut all_spans: Vec<Span> = Vec::new();
+    for mut unit_spans in unit_spans_list {
+        let offset = all_spans.len();
+        for span in unit_spans.iter_mut() {
+            span.root_span_index = offset;
+            if let Some(pi) = span.parent_index.as_mut() {
+                *pi += offset;
+            }
+            for ci in span.children_indices.iter_mut() {
+                *ci += offset;
+            }
+        }
+        all_spans.extend(unit_spans);
+    }
+    all_spans
 }
 
 // ---------------------------------------------------------------------------
 // Scheduling
 // ---------------------------------------------------------------------------
 
-/// Mimics ninja's greedy scheduling.
+/// Greedy scheduling of root spans (those with `parent_index == None`) into
+/// non-overlapping tracks.
 ///
-/// Each unit's root span (`spans[0]`) carries the ninja-log start time and
-/// duration. Units without a ninja-log match (`duration == f64::INFINITY`) are
-/// skipped.
-///
-/// Returns a vector of tracks, where each track is a vector of unit indices
-/// (into `units`) ordered by their assignment time.
-pub fn schedule_units(units: &[Unit]) -> Vec<Vec<usize>> {
-    // Collect schedulable units: (start, end, original index).
-    let mut jobs: Vec<(f64, f64, usize)> = units
+/// Returns `track_roots[i]` = list of root span global indices for track `i`,
+/// ordered by assignment time.  Spans with `duration == f64::INFINITY` are
+/// skipped (no ninja-log match).
+pub fn schedule_spans(spans: &[Span]) -> Vec<Vec<usize>> {
+    let mut jobs: Vec<(f64, f64, usize)> = spans
         .iter()
         .enumerate()
-        .filter_map(|(i, u)| {
-            let root = u.spans.first()?;
-            if root.duration.is_infinite() {
-                return None;
-            }
-            Some((root.start_time, root.start_time + root.duration, i))
-        })
+        .filter(|(_, s)| s.parent_index.is_none() && s.duration.is_finite())
+        .map(|(i, s)| (s.start_time, s.start_time + s.duration, i))
         .collect();
 
-    // Sort by start time, then by end time for stable ordering.
     jobs.sort_by(|a, b| {
         a.0.partial_cmp(&b.0)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
     });
 
-    // Each entry tracks the end time of the last job assigned to that track.
     let mut track_ends: Vec<f64> = Vec::new();
     let mut tracks: Vec<Vec<usize>> = Vec::new();
 
-    for (start, end, unit_idx) in jobs {
-        // Find the track that became free earliest and is free by `start`.
+    for (start, end, span_idx) in jobs {
         let slot = track_ends
             .iter()
             .enumerate()
@@ -352,11 +395,11 @@ pub fn schedule_units(units: &[Unit]) -> Vec<Vec<usize>> {
         match slot {
             Some(i) => {
                 track_ends[i] = end;
-                tracks[i].push(unit_idx);
+                tracks[i].push(span_idx);
             }
             None => {
                 track_ends.push(end);
-                tracks.push(vec![unit_idx]);
+                tracks.push(vec![span_idx]);
             }
         }
     }
@@ -371,10 +414,9 @@ pub fn schedule_units(units: &[Unit]) -> Vec<Vec<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::span::SpanType;
 
-    fn make_unit(start: f64, duration: f64) -> Unit {
-        let spans = vec![Span {
+    fn make_root_span(start: f64, duration: f64) -> Span {
+        Span {
             type_: SpanType::Unit,
             identifier: String::new(),
             label: String::new(),
@@ -383,84 +425,69 @@ mod tests {
             duration,
             parent_index: None,
             children_indices: Vec::new(),
-            index_in_unit: 0,
+            root_span_index: 0,
             depth: 0,
-            has_core_cells: false,
-            was_displayed: false,
-        }];
-        let views_start_time = build_views_by_start_time(&spans);
-        let views_duration = build_views_by_duration(&spans);
-        Unit {
-            spans,
-            views_by_start_time: views_start_time,
-            views_by_duration: views_duration,
         }
+    }
+
+    fn make_spans(starts_and_durations: &[(f64, f64)]) -> Vec<Span> {
+        starts_and_durations
+            .iter()
+            .enumerate()
+            .map(|(i, &(start, dur))| {
+                let mut s = make_root_span(start, dur);
+                s.root_span_index = i;
+                s
+            })
+            .collect()
     }
 
     #[test]
     fn empty_input() {
-        assert!(schedule_units(&[]).is_empty());
+        assert!(schedule_spans(&[]).is_empty());
     }
 
     #[test]
-    fn single_unit() {
-        let units = vec![make_unit(0.0, 10.0)];
-        let tracks = schedule_units(&units);
+    fn single_span() {
+        let spans = make_spans(&[(0.0, 10.0)]);
+        let tracks = schedule_spans(&spans);
         assert_eq!(tracks.len(), 1);
         assert_eq!(tracks[0], vec![0]);
     }
 
     #[test]
-    fn sequential_units_fit_on_one_track() {
-        // [0..10], [10..20], [20..30] — no overlap, should all land on one track.
-        let units = vec![
-            make_unit(0.0, 10.0),
-            make_unit(10.0, 10.0),
-            make_unit(20.0, 10.0),
-        ];
-        let tracks = schedule_units(&units);
+    fn sequential_spans_fit_on_one_track() {
+        let spans = make_spans(&[(0.0, 10.0), (10.0, 10.0), (20.0, 10.0)]);
+        let tracks = schedule_spans(&spans);
         assert_eq!(tracks.len(), 1);
         assert_eq!(tracks[0], vec![0, 1, 2]);
     }
 
     #[test]
-    fn parallel_units_get_separate_tracks() {
-        // [0..10], [0..10] — fully overlapping, need two tracks.
-        let units = vec![make_unit(0.0, 10.0), make_unit(0.0, 10.0)];
-        let tracks = schedule_units(&units);
+    fn parallel_spans_get_separate_tracks() {
+        let spans = make_spans(&[(0.0, 10.0), (0.0, 10.0)]);
+        let tracks = schedule_spans(&spans);
         assert_eq!(tracks.len(), 2);
     }
 
     #[test]
     fn interleaved_scheduling() {
-        // unit 0: [0..10], unit 1: [5..10], unit 2: [10..20], unit 3: [15..25]
-        //
-        // unit 0 → Track 0 (only track, ends 10)
-        // unit 1 → Track 1 (Track 0 still busy at t=5, ends 10)
-        // unit 2 → Track 0 (both free at t=10, pick earliest-ending = Track 0, ends 20)
-        // unit 3 → Track 1 (Track 1 free at t=15 (ends 10), Track 0 busy (ends 20))
-        //
-        // Expected: Track 0 = [0, 2], Track 1 = [1, 3]
-        let units = vec![
-            make_unit(0.0, 10.0),  // unit 0: [0..10]
-            make_unit(5.0, 5.0),   // unit 1: [5..10]
-            make_unit(10.0, 10.0), // unit 2: [10..20]
-            make_unit(15.0, 10.0), // unit 3: [15..25]
-        ];
-        let tracks = schedule_units(&units);
+        let spans = make_spans(&[
+            (0.0, 10.0),  // 0: [0..10]
+            (5.0, 5.0),   // 1: [5..10]
+            (10.0, 10.0), // 2: [10..20]
+            (15.0, 10.0), // 3: [15..25]
+        ]);
+        let tracks = schedule_spans(&spans);
         assert_eq!(tracks.len(), 2);
         assert_eq!(tracks[0], vec![0, 2]);
         assert_eq!(tracks[1], vec![1, 3]);
     }
 
     #[test]
-    fn units_without_ninja_log_are_skipped() {
-        let units = vec![
-            make_unit(0.0, 10.0),
-            make_unit(0.0, f64::INFINITY), // no ninja log match
-        ];
-        let tracks = schedule_units(&units);
-        // Only the first unit is scheduled.
+    fn spans_without_ninja_log_are_skipped() {
+        let spans = make_spans(&[(0.0, 10.0), (0.0, f64::INFINITY)]);
+        let tracks = schedule_spans(&spans);
         assert_eq!(tracks.len(), 1);
         assert_eq!(tracks[0], vec![0]);
     }

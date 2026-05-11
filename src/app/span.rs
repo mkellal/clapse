@@ -22,7 +22,21 @@ impl SpanType {
             SpanType::Task => Color::Rgb(172, 176, 190), // Catppuccin Subtext0
         }
     }
+
+    /// Base color indexed by position — Unit alternates Peach/Maroon.
+    pub fn base_color_indexed(&self, index: usize) -> Color {
+        if let SpanType::Unit = self {
+            if index % 2 == 0 {
+                Color::Rgb(250, 179, 135) // Peach
+            } else {
+                Color::Rgb(235, 160, 172) // Maroon
+            }
+        } else {
+            self.base_color()
+        }
+    }
 }
+
 pub struct Span {
     pub type_: SpanType,
     pub identifier: String,
@@ -32,12 +46,9 @@ pub struct Span {
     pub duration: f64,
     pub parent_index: Option<usize>,
     pub children_indices: Vec<usize>,
-    pub index_in_unit: usize,
+    /// Global index of the root ancestor (self if root).
+    pub root_span_index: usize,
     pub depth: usize,
-    /// Set after each render: true if this span occupied at least one full terminal cell.
-    pub has_core_cells: bool,
-    /// Set after each render: true if this span was rendered at all (including partial chars).
-    pub was_displayed: bool,
 }
 
 pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData, build_dir: &std::path::PathBuf) {
@@ -100,10 +111,8 @@ pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData, build_dir: &std::path:
             duration: event.dur.unwrap_or(0.0),
             children_indices: Vec::new(),
             parent_index: None,
-            index_in_unit: 0,
+            root_span_index: 0,
             depth: 0,
-            has_core_cells: false,
-            was_displayed: false,
         })
     }));
 
@@ -124,10 +133,9 @@ fn link_spans(spans: &mut Vec<Span>) {
     });
 
     // Reset linkage on all child spans (root at 0 is already clean)
-    for (i, span) in spans[1..].iter_mut().enumerate() {
+    for span in spans[1..].iter_mut() {
         span.parent_index = None;
         span.children_indices.clear();
-        span.index_in_unit = i + 1; // +1 because we skipped the root span at index 0
         span.depth = 0;
     }
 

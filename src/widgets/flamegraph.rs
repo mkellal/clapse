@@ -2,30 +2,21 @@ use std::collections::HashMap;
 
 use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 
-use super::track::{TrackWidget, UnitEntry};
-
-/// One track's data ready to pass to the flamegraph renderer.
-pub struct TrackInput<'a> {
-    pub label: Option<String>,
-    pub units: Vec<UnitEntry<'a>>,
-    /// Pre-computed intrinsic height: label row (if any) + content rows.
-    pub intrinsic_height: u16,
-}
+use crate::app::span::Span;
+use super::track::{TrackInput, TrackWidget};
 
 /// Renders a vertically-scrollable list of [`TrackWidget`]s.
-///
-/// Each track occupies its full intrinsic height. The viewport shows
-/// `area.height` rows starting at `scroll_offset` rows from the top of the
-/// virtual canvas. Tracks that are partially scrolled are clipped cleanly via
-/// `row_skip`.
 pub struct FlamegraphWidget<'a> {
     pub tracks: Vec<TrackInput<'a>>,
+    /// Global flat spans array (read-only; shared refs are Copy).
+    pub spans: &'a [Span],
     pub total_duration: f64,
     pub start_time: f64,
     /// Vertical scroll offset in rows from the top of the virtual canvas.
     pub scroll_offset: u16,
-    /// Shared cell map: terminal cell (col, row) → (unit_index, span_index).
-    pub cell_map: &'a mut HashMap<(u16, u16), (usize, usize)>,
+    /// Terminal cell (col, row) → global span index.
+    pub cell_map: &'a mut HashMap<(u16, u16), usize>,
+    pub selected_span: Option<usize>,
 }
 
 impl FlamegraphWidget<'_> {
@@ -50,26 +41,20 @@ impl<'a> Widget for FlamegraphWidget<'a> {
             let track_top = virtual_y;
             let track_bottom = virtual_y.saturating_add(track.intrinsic_height);
 
-            // Advance cursor before any early-continue.
             virtual_y = track_bottom;
 
-            // Skip tracks fully above the viewport.
             if track_bottom <= viewport_top {
                 continue;
             }
-            // Stop once we're past the viewport.
             if track_top >= viewport_bottom {
                 break;
             }
 
-            // Overlap: [overlap_start, overlap_end) in virtual coordinates.
             let overlap_start = track_top.max(viewport_top);
             let overlap_end = track_bottom.min(viewport_bottom);
             let visible_rows = overlap_end - overlap_start;
 
-            // How many rows of this track are above the viewport top.
             let row_skip = overlap_start - track_top;
-            // Terminal y where this track's visible portion starts.
             let render_y = area.y + (overlap_start - viewport_top);
 
             let track_area = Rect::new(area.x, render_y, area.width, visible_rows);
@@ -77,10 +62,12 @@ impl<'a> Widget for FlamegraphWidget<'a> {
 
             TrackWidget {
                 label,
-                units: track.units,
+                spans: self.spans,
+                views: track.views,
                 total_duration: self.total_duration,
                 start_time: self.start_time,
                 row_skip,
+                selected_span: self.selected_span,
                 cell_map: self.cell_map,
             }
             .render(track_area, buf);
