@@ -13,14 +13,19 @@ pub mod span;
 pub mod unit;
 use crate::app::span::Span;
 use crate::app::unit::{
-    FollowingSpanDirection, HorizontalDirection, OrderBy, SpanView,
-    build_track_views, get_following_span_index, load_spans, schedule_spans,
+    FollowingSpanDirection, HorizontalDirection, OrderBy, SpanView, build_track_views,
+    get_following_span_index, load_spans, schedule_spans,
 };
 use crate::cli;
 use crate::widgets::flamegraph::FlamegraphWidget;
-use crate::widgets::track::TrackInput;
 use crate::widgets::span_details::SpanDetails;
 use crate::widgets::time_range::DurationRange;
+use crate::widgets::track::TrackInput;
+
+enum ZoomDirection {
+    In,
+    Out,
+}
 
 /// RAII guard that enables mouse capture on creation and disables it on drop.
 struct MouseCaptureGuard;
@@ -93,18 +98,21 @@ impl Widget for &mut App {
 
         let scrollbar_height = 2;
         let details_height: u16 = if let Some(si) = self.selected_span {
-            self.spans.get(si).map(|span| {
-                let parent_duration = span
-                    .parent_index
-                    .and_then(|pi| self.spans.get(pi))
-                    .map(|p| p.duration);
-                SpanDetails {
-                    span,
-                    parent_duration,
-                    total_duration,
-                }
-                .required_height(area.width)
-            }).unwrap_or(0)
+            self.spans
+                .get(si)
+                .map(|span| {
+                    let parent_duration = span
+                        .parent_index
+                        .and_then(|pi| self.spans.get(pi))
+                        .map(|p| p.duration);
+                    SpanDetails {
+                        span,
+                        parent_duration,
+                        total_duration,
+                    }
+                    .required_height(area.width)
+                })
+                .unwrap_or(0)
         } else {
             0
         };
@@ -262,9 +270,8 @@ impl Default for App {
 
         // Sort tracks: longest total duration first.
         track_roots.sort_by(|a, b| {
-            let dur = |roots: &Vec<usize>| -> f64 {
-                roots.iter().map(|&i| spans[i].duration).sum()
-            };
+            let dur =
+                |roots: &Vec<usize>| -> f64 { roots.iter().map(|&i| spans[i].duration).sum() };
             dur(b)
                 .partial_cmp(&dur(a))
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -329,7 +336,9 @@ impl App {
 
                 if self.spans[si].parent_index.is_none() {
                     // Root span: navigate between visible roots in the same track.
-                    let Some(ti) = self.track_index_for_span(si) else { return };
+                    let Some(ti) = self.track_index_for_span(si) else {
+                        return;
+                    };
                     let new_si = {
                         let track_views = match self.order_by {
                             OrderBy::StartTime => &self.tracks_start_time[ti],
@@ -339,8 +348,7 @@ impl App {
                         let roots: Vec<usize> = track_views
                             .iter()
                             .filter(|v| {
-                                self.spans[v.span_index].parent_index.is_none()
-                                    && v.was_displayed
+                                self.spans[v.span_index].parent_index.is_none() && v.was_displayed
                             })
                             .map(|v| v.span_index)
                             .filter(|&x| seen.insert(x))
@@ -392,8 +400,7 @@ impl App {
                     views
                         .iter()
                         .find(|v| {
-                            self.spans[v.span_index].parent_index == Some(si)
-                                && v.was_displayed
+                            self.spans[v.span_index].parent_index == Some(si) && v.was_displayed
                         })
                         .map(|v| v.span_index)
                 };
@@ -414,12 +421,9 @@ impl App {
         let mut positions = Vec::new();
         let mut virtual_y: u16 = 0;
         for views in self.current_tracks().iter() {
-            let track_height = track_content_height(
-                views,
-                &self.spans,
-                visible_duration,
-                self.viewport_width,
-            ) + label_height;
+            let track_height =
+                track_content_height(views, &self.spans, visible_duration, self.viewport_width)
+                    + label_height;
             let track_start = virtual_y;
             let track_end = virtual_y.saturating_add(track_height);
             positions.push((track_start, track_end));
@@ -452,8 +456,19 @@ impl App {
 
     fn center_selected_track(&mut self) {
         let Some(si) = self.selected_span else { return };
-        let Some(ti) = self.track_index_for_span(si) else { return };
+        let Some(ti) = self.track_index_for_span(si) else {
+            return;
+        };
         self.center_track(ti);
+    }
+
+    fn toggle_sort_mode(&mut self) {
+        self.order_by = match self.order_by {
+            OrderBy::StartTime => OrderBy::Duration,
+            OrderBy::Duration => OrderBy::StartTime,
+        };
+        self.zoom_to_selected(Some(self.zoom));
+        self.center_selected_track();
     }
 
     fn switch_track(&mut self, dir: HorizontalDirection) {
@@ -482,7 +497,9 @@ impl App {
                 .map(|v| v.span_index)
                 .filter(|&x| seen.insert(x))
                 .find(|&root| {
-                    views.iter().any(|v| v.span_index == root && v.was_displayed)
+                    views
+                        .iter()
+                        .any(|v| v.span_index == root && v.was_displayed)
                 })
                 .or_else(|| {
                     let mut seen2 = std::collections::HashSet::new();
@@ -509,7 +526,7 @@ impl App {
         self.center_selected_track();
     }
 
-    fn zoom_to_selected(&mut self) {
+    fn zoom_to_selected(&mut self, factor: Option<f64>) {
         let si = match self.selected_span {
             Some(idx) => idx,
             None => return,
@@ -537,12 +554,30 @@ impl App {
         let span_center = effective_start + span_duration / 2.0;
         let new_visible = span_duration / 0.75;
         let total = self.total_duration();
-        self.zoom = (total / new_visible).max(1.0);
+        self.zoom = factor.unwrap_or(total / new_visible).max(1.0);
         let actual_visible = total / self.zoom;
         self.start_time = (span_center - actual_visible / 2.0)
             .max(0.0)
             .min((total - actual_visible).max(0.0));
         self.center_selected_track();
+    }
+
+    fn zoom(&mut self, factor: f64, direction: ZoomDirection) {
+        let current_zoom = self.zoom;
+        let mut zoom_fn = |fc| match self.selected_span {
+            Some(_) => self.zoom_to_selected(Some(current_zoom * fc)),
+            None => self.zoom_around_center(fc),
+        };
+        match direction {
+            ZoomDirection::In => zoom_fn(factor),
+            ZoomDirection::Out => {
+                zoom_fn(1.0 / factor);
+                if self.zoom < 1.0 {
+                    self.zoom = 1.0;
+                    self.start_time = 0.0;
+                }
+            }
+        }
     }
 
     fn event_loop(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
@@ -561,22 +596,10 @@ impl App {
                     match key.code {
                         KeyCode::Char('q') => break Ok(()),
                         KeyCode::Char('c') if ctrl => break Ok(()),
-                        KeyCode::Up if ctrl => self.zoom_around_center(1.1),
-                        KeyCode::Down if ctrl => {
-                            self.zoom_around_center(1.0 / 1.1);
-                            if self.zoom < 1.0 {
-                                self.zoom = 1.0;
-                                self.start_time = 0.0;
-                            }
-                        }
-                        KeyCode::PageUp => self.zoom_around_center(2.0),
-                        KeyCode::PageDown => {
-                            self.zoom_around_center(0.5);
-                            if self.zoom < 1.0 {
-                                self.zoom = 1.0;
-                                self.start_time = 0.0;
-                            }
-                        }
+                        KeyCode::Up if ctrl => self.zoom(1.1, ZoomDirection::In),
+                        KeyCode::Down if ctrl => self.zoom(1.1, ZoomDirection::Out),
+                        KeyCode::PageUp => self.zoom(2.0, ZoomDirection::In),
+                        KeyCode::PageDown => self.zoom(2.0, ZoomDirection::Out),
                         KeyCode::Left if ctrl => {
                             let step = self.visible_duration() * pan_factor;
                             self.start_time = (self.start_time - step).max(0.0);
@@ -596,16 +619,11 @@ impl App {
                             self.start_time = 0.0;
                             self.center_selected_track();
                         }
-                        KeyCode::Char(' ') => self.zoom_to_selected(),
+                        KeyCode::Char(' ') => self.zoom_to_selected(None),
                         KeyCode::Esc => self.selected_span = None,
                         KeyCode::Tab => self.switch_track(HorizontalDirection::Next),
                         KeyCode::BackTab => self.switch_track(HorizontalDirection::Previous),
-                        KeyCode::Char('s') => {
-                            self.order_by = match self.order_by {
-                                OrderBy::StartTime => OrderBy::Duration,
-                                OrderBy::Duration => OrderBy::StartTime,
-                            };
-                        }
+                        KeyCode::Char('s') => self.toggle_sort_mode(),
                         _ => {}
                     }
                 }
