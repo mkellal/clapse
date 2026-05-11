@@ -67,7 +67,7 @@ impl SpanType {
     }
 
     pub fn badge_colors(&self) -> (Color, Color) {
-        (Color::Black, self.base_color())
+        (Color::Black, self.get_color(None, None))
     }
 }
 

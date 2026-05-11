@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::traces::event::TraceData;
 use ratatui::style::Color;
 
+#[derive(PartialEq)]
 pub enum SpanType {
     Unit,
     Source,
@@ -13,26 +14,31 @@ pub enum SpanType {
 
 impl SpanType {
     /// Base color for this span type (Catppuccin palette).
-    pub fn base_color(&self) -> Color {
-        match self {
-            SpanType::Unit => Color::Rgb(250, 179, 135), // Catppuccin Peach
-            SpanType::Source => Color::Rgb(116, 199, 236), // Catppuccin Sapphire
-            SpanType::Class => Color::Rgb(203, 166, 247), // Catppuccin Mauve
-            SpanType::Template => Color::Rgb(249, 226, 175), // Catppuccin Yellow
-            SpanType::Task => Color::Rgb(172, 176, 190), // Catppuccin Subtext0
-        }
-    }
-
-    /// Base color indexed by position — Unit alternates Peach/Maroon.
-    pub fn base_color_indexed(&self, index: usize) -> Color {
-        if let SpanType::Unit = self {
-            if index % 2 == 0 {
-                Color::Rgb(250, 179, 135) // Peach
-            } else {
-                Color::Rgb(235, 160, 172) // Maroon
+    pub fn get_color(&self, horizontal_index: Option<usize>, depth: Option<usize>) -> Color {
+        let color = match self {
+            SpanType::Unit => {
+                let peach = Color::Rgb(255, 169, 127); // Catppuccin Peach
+                if let Some(i) = horizontal_index {
+                    if i % 2 == 0 {
+                        peach
+                    } else {
+                        Color::Rgb(255, 182, 107) // Darker Peach
+                    }
+                } else {
+                    peach // Default to Peach
+                }
             }
+            SpanType::Source => Color::Rgb(116, 199, 236), // Catppuccin Sapphire
+            SpanType::Class => Color::Rgb(203, 166, 247),  // Catppuccin Mauve
+            SpanType::Template => Color::Rgb(249, 226, 175), // Catppuccin Yellow
+            SpanType::Task => Color::Rgb(172, 176, 190),   // Catppuccin Surface 2
+        };
+        if let (Some(i), Some(d)) = (horizontal_index, depth)
+            && *self != SpanType::Unit
+        {
+            crate::widgets::color::span_color(color, d, i)
         } else {
-            self.base_color()
+            color
         }
     }
 }

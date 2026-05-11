@@ -65,11 +65,7 @@ impl<'a> Widget for TrackWidget<'a> {
 
         let has_selected = self
             .selected_span
-            .map(|si| {
-                self.views
-                    .iter()
-                    .any(|v| v.span_index == si)
-            })
+            .map(|si| self.views.iter().any(|v| v.span_index == si))
             .unwrap_or(false);
 
         let label_rows: u16 = if self.label.is_some() { 1 } else { 0 };
@@ -125,6 +121,8 @@ fn render_spans(
     let mut subcell_tracker: HashMap<(u16, u16), (f64, SubcellAlign, Color, usize)> =
         HashMap::new();
     let mut core_bounds: HashMap<usize, (u16, u16)> = HashMap::new();
+    // Maps parent_span_index (usize::MAX for roots) → count of visible siblings so far.
+    let mut sibling_visual_counter: HashMap<usize, usize> = HashMap::new();
 
     for view in views.iter_mut() {
         view.has_core_cells = false;
@@ -135,7 +133,6 @@ fn render_spans(
         let span_index = views[view_idx].span_index;
         let effective_start = views[view_idx].effective_start;
         let index_in_parent = views[view_idx].index_in_parent;
-        let position_in_track = views[view_idx].position_in_track;
 
         let span = &spans[span_index];
 
@@ -172,29 +169,30 @@ fn render_spans(
             continue;
         }
 
-        let allowed_area = Rect::new(x_start, y, width, 1);
-
-        let color_override = if span.parent_index.is_none() {
-            Some(crate::widgets::color::span_color(
-                span.type_.base_color_indexed(position_in_track),
-                0,
-                position_in_track,
-            ))
+        // Assign a visual sibling index that only counts rendered (width > 0) spans,
+        // so invisible spans don't cause same-color adjacencies.
+        let visual_index = if width > 0 {
+            let parent_key = span.parent_index.unwrap_or(usize::MAX);
+            let counter = sibling_visual_counter.entry(parent_key).or_insert(0);
+            let idx = *counter;
+            *counter += 1;
+            idx
         } else {
-            None
+            index_in_parent
         };
+
+        let allowed_area = Rect::new(x_start, y, width, 1);
 
         let widget = SpanWidget {
             span,
             span_index,
-            index_in_parent,
+            index_in_parent: visual_index,
             display_area: area,
             allowed_area,
             time_per_col,
             start_time,
             effective_start,
             selected_span_index: selected_span,
-            color_override,
         };
 
         let span_core_bounds = widget.render_with_tracker(buf, &mut subcell_tracker);

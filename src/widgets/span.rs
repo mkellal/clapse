@@ -97,8 +97,6 @@ pub struct SpanWidget<'a> {
     /// overridden to a virtual position in Duration mode.
     pub effective_start: f64,
     pub selected_span_index: Option<usize>,
-    /// When set, overrides the computed checkerboard color for this span.
-    pub color_override: Option<Color>,
 }
 
 impl<'a> SpanWidget<'a> {
@@ -116,14 +114,9 @@ impl<'a> SpanWidget<'a> {
         let y = self.allowed_area.y;
         let bg_color = if is_selected {
             Color::Rgb(255, 255, 255)
-        } else if let Some(c) = self.color_override {
-            c
         } else {
-            crate::widgets::color::span_color(
-                span.type_.base_color(),
-                span.depth,
-                self.index_in_parent,
-            )
+            span.type_
+                .get_color(Some(self.index_in_parent), Some(span.depth))
         };
         let area = self.display_area;
 

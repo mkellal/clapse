@@ -29,8 +29,6 @@ pub struct SpanView {
     pub effective_start: f64,
     /// Position among siblings (for checkerboard coloring).
     pub index_in_parent: usize,
-    /// Position of the root among roots in its track (for coloring).
-    pub position_in_track: usize,
     /// Set after each render: true if this span occupied at least one full terminal cell.
     pub has_core_cells: bool,
     /// Set after each render: true if this span was rendered at all (including partial chars).
@@ -70,10 +68,7 @@ pub fn get_following_span_index(
     let mut seen = std::collections::HashSet::new();
     let siblings: Vec<usize> = views
         .iter()
-        .filter(|e| {
-            spans[e.span_index].parent_index == Some(parent_index)
-                && e.was_displayed
-        })
+        .filter(|e| spans[e.span_index].parent_index == Some(parent_index) && e.was_displayed)
         .map(|e| e.span_index)
         .filter(|&si| seen.insert(si))
         .collect();
@@ -126,19 +121,12 @@ fn build_subtree_start_time(
     });
     indices
         .into_iter()
-        .map(|i| {
-            let index_in_parent = spans[i]
-                .parent_index
-                .and_then(|pi| spans[pi].children_indices.iter().position(|&ci| ci == i))
-                .unwrap_or(0);
-            SpanView {
-                span_index: i,
-                effective_start: spans[i].start_time,
-                index_in_parent,
-                position_in_track,
-                has_core_cells: false,
-                was_displayed: false,
-            }
+        .map(|i| SpanView {
+            span_index: i,
+            effective_start: spans[i].start_time,
+            index_in_parent: position_in_track,
+            has_core_cells: false,
+            was_displayed: false,
         })
         .collect()
 }
@@ -156,7 +144,6 @@ fn visit_duration_global(
         span_index: i,
         effective_start: virtual_start,
         index_in_parent,
-        position_in_track,
         has_core_cells: false,
         was_displayed: false,
     });
@@ -214,17 +201,10 @@ pub fn build_track_views(
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
 
-            // Build a position_in_track map from the original roots order.
-            let pos_map: std::collections::HashMap<usize, usize> = roots
-                .iter()
-                .enumerate()
-                .map(|(pos, &root)| (root, pos))
-                .collect();
-
             let mut views = Vec::new();
             let mut cursor = 0.0f64;
-            for &root in &sorted_roots {
-                let position_in_track = pos_map.get(&root).copied().unwrap_or(0);
+            for (pos, &root) in sorted_roots.iter().enumerate() {
+                let position_in_track = pos;
                 visit_duration_global(spans, root, cursor, 0, root, position_in_track, &mut views);
                 cursor += spans[root].duration;
             }
@@ -256,8 +236,7 @@ pub fn parse_ninja_log(path: &Path) -> Option<Vec<UnitTrace>> {
         return None;
     }
 
-    let mut seen: std::collections::HashMap<String, UnitTrace> =
-        std::collections::HashMap::new();
+    let mut seen: std::collections::HashMap<String, UnitTrace> = std::collections::HashMap::new();
 
     for line in lines {
         if line.is_empty() || line.starts_with('#') {
