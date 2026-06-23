@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::app::span::Span;
-use crate::app::unit::SpanView;
+use crate::app::view::SpanView;
 use crate::widgets::span::{SpanWidget, SubcellAlign, flush_subcell_tracker};
 
 /// Returns the number of content rows needed to display a track's spans.
