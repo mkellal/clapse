@@ -16,6 +16,8 @@ pub mod view;
 
 use crate::app::span::Span;
 use crate::app::tabs::flamegraph::FlameGraphTab;
+use crate::app::tabs::sources::SourcesTab;
+use crate::app::tabs::templates::TemplatesTab;
 use crate::app::view::load_spans;
 use crate::cli;
 
@@ -44,6 +46,7 @@ pub struct App {
     // raw_spans: Rc<[Span]>,
     current_tab_index: usize,
     tabs: Vec<Box<dyn tabs::Tab>>,
+    tabs_area: Rect,
 }
 
 impl Widget for &mut App {
@@ -58,12 +61,17 @@ impl Widget for &mut App {
         let top_layout =
             Layout::horizontal([Constraint::Max(8), Constraint::Fill(2), Constraint::Fill(1)]);
         let [title_area, tabs_area, help_area] = top.layout(&top_layout);
-        let tabs = Tabs::new(vec![" Flamegraph ", " Includes ", " Templates "])
-            .style(Color::White)
-            .highlight_style(Style::default().black().on_light_green().bold())
-            .select(self.current_tab_index)
-            .divider("|")
-            .padding(" ", " ");
+        let tabs = Tabs::new(
+            self.tabs
+                .iter()
+                .map(|t| " ".to_string() + t.get_label() + " ")
+                .collect::<Vec<_>>(),
+        )
+        .style(Color::White)
+        .highlight_style(Style::default().black().on_light_green().bold())
+        .select(self.current_tab_index)
+        .divider("|")
+        .padding(" ", " ");
 
         let title = Text::from("Clapse").bold();
         let help = Text::from(Line::from(vec![
@@ -77,6 +85,8 @@ impl Widget for &mut App {
         title.render(title_area, buf);
         tabs.render(tabs_area, buf);
         help.render(help_area, buf);
+
+        self.tabs_area = tabs_area;
 
         let current_tab = self.get_current_tab();
         current_tab.render(main, buf);
@@ -92,14 +102,15 @@ impl Default for App {
 
         let tabs = vec![
             Box::new(FlameGraphTab::new(raw_spans.clone())) as Box<dyn tabs::Tab>,
-            // Box::new(IncludesTab::new(raw_spans.clone())) as Box<dyn tabs::Tab>,
-            // Box::new(TemplatesTab::new(raw_spans.clone())) as Box<dyn tabs::Tab>,
+            Box::new(SourcesTab::new()) as Box<dyn tabs::Tab>,
+            Box::new(TemplatesTab::new()) as Box<dyn tabs::Tab>,
         ];
 
         Self {
             // raw_spans,
             current_tab_index: 0,
             tabs,
+            tabs_area: Rect::default(),
         }
     }
 }
@@ -134,16 +145,39 @@ impl App {
         let ctrl = key
             .modifiers
             .contains(crossterm::event::KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(crossterm::event::KeyModifiers::ALT);
 
-        let current_tab = self.get_current_tab();
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') => return true,
             KeyCode::Char('c') | KeyCode::Char('C') if ctrl => return true,
-            _ => return current_tab.handle_key_event(key),
+            KeyCode::Char('t') | KeyCode::Char('T') if alt => {
+                self.current_tab_index = (self.current_tab_index + 1) % self.tabs.len();
+                return false;
+            }
+            _ => {
+                let current_tab = self.get_current_tab();
+                return current_tab.handle_key_event(key);
+            }
         }
     }
 
     fn handle_mouse_event(&mut self, mouse: crossterm::event::MouseEvent) {
+        if mouse.kind == crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left)
+            && mouse.row == self.tabs_area.y
+            && mouse.column >= self.tabs_area.left()
+            && mouse.column < self.tabs_area.right()
+        {
+            let mut current_x = self.tabs_area.x + 1; // +1 for padding(" ", " ")
+            for (i, tab) in self.tabs.iter().enumerate() {
+                let label_width = tab.get_label().len() as u16 + 2; // " " + label + " "
+                if mouse.column >= current_x && mouse.column < current_x + label_width {
+                    self.current_tab_index = i;
+                    return;
+                }
+                current_x += label_width + 1; // +1 for divider "|"
+            }
+        }
+
         let current_tab = self.get_current_tab();
         current_tab.handle_mouse_event(mouse);
     }

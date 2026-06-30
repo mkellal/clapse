@@ -1,6 +1,8 @@
 use ratatui::{buffer::Buffer, layout::Rect};
 
 pub mod flamegraph;
+pub mod sources;
+pub mod templates;
 
 pub trait Tab {
     fn get_label(&self) -> &str;
