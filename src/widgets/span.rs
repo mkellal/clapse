@@ -97,6 +97,7 @@ pub struct SpanWidget<'a> {
     /// overridden to a virtual position in Duration mode.
     pub effective_start: f64,
     pub selected_span_index: Option<usize>,
+    pub search_query: Option<&'a str>,
 }
 
 impl<'a> SpanWidget<'a> {
@@ -111,8 +112,23 @@ impl<'a> SpanWidget<'a> {
 
         let span = self.span;
         let is_selected = Some(self.span_index) == self.selected_span_index;
+        let is_match = self.search_query.is_some() && {
+            let q = self.search_query.unwrap().to_lowercase();
+            span.identifier.to_lowercase().contains(&q)
+                || span.label.to_lowercase().contains(&q)
+                || span
+                    .sublabel
+                    .as_ref()
+                    .map(|sl| sl.to_lowercase().contains(&q))
+                    .unwrap_or(false)
+        };
+
         let y = self.allowed_area.y;
-        let bg_color = if is_selected {
+        let bg_color = if is_match && is_selected {
+            Color::LightGreen
+        } else if is_match {
+            Color::Green
+        } else if is_selected {
             Color::Rgb(255, 255, 255)
         } else {
             span.type_
@@ -168,9 +184,13 @@ impl<'a> SpanWidget<'a> {
         let core_width = core_x_end.saturating_sub(core_x_start);
 
         let core_bounds = if core_width > 0 {
-            let fg_color = match bg_color {
-                Color::DarkGray => Color::White,
-                _ => Color::Black,
+            let fg_color = if is_match && is_selected {
+                Color::Black
+            } else {
+                match bg_color {
+                    Color::DarkGray => Color::Rgb(255, 255, 255),
+                    _ => Color::Black,
+                }
             };
 
             let core_rect = Rect::new(core_x_start, y, core_width, 1);
@@ -182,10 +202,12 @@ impl<'a> SpanWidget<'a> {
             } else {
                 shorten_label(&span.label, w)
             };
-            let mut text_style = Style::default().fg(fg_color).bg(bg_color);
-            if is_selected {
-                text_style = text_style.bold();
-            }
+            let text_style = Style::default().fg(fg_color).bg(bg_color);
+            let text_style = if is_selected {
+                text_style.bold()
+            } else {
+                text_style
+            };
             buf.set_stringn(core_x_start, y, &display_text, w, text_style);
 
             Some((core_x_start, core_x_end))

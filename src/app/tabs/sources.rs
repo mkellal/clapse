@@ -35,6 +35,7 @@ pub struct SourcesTab {
     pub viewport_width: u16,
     pub content_height: u16,
     pub counts: Vec<usize>,
+    pub search_query: Option<String>,
 }
 
 impl SourcesTab {
@@ -77,6 +78,7 @@ impl SourcesTab {
             viewport_width: 0,
             content_height: 0,
             counts,
+            search_query: None,
         }
     }
 
@@ -561,6 +563,7 @@ impl Tab for SourcesTab {
             scroll_offset: self.vertical_scroll,
             cell_map: &mut self.cell_span_map,
             selected_span,
+            search_query: self.search_query.as_deref(),
         }
         .render(graph_area, buf);
 
@@ -633,6 +636,14 @@ impl Tab for SourcesTab {
             ("Tab", "Next track"),
             ("Shift + Tab", "Previous track"),
         ]
+    }
+
+    fn set_search_query(&mut self, query: String) {
+        if query.is_empty() {
+            self.search_query = None;
+        } else {
+            self.search_query = Some(query);
+        }
     }
 }
 

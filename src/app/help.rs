@@ -18,6 +18,7 @@ impl Widget for HelpPopup<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let mut all_combinations = vec![
             ("q", "Quit"),
+            ("s", "Search"),
             ("Alt + t", "Next tab"),
             ("h", "Close help"),
         ];

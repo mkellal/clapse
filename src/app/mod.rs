@@ -10,18 +10,19 @@ use ratatui::text::{self, Line, Text};
 use ratatui::widgets::{Tabs, Widget};
 use std::rc::Rc;
 
+pub mod help;
 pub mod span;
 pub mod tabs;
 pub mod view;
-pub mod help;
 
+use crate::app::help::HelpPopup;
 use crate::app::span::Span;
 use crate::app::tabs::flamegraph::FlameGraphTab;
 use crate::app::tabs::sources::SourcesTab;
 use crate::app::tabs::templates::TemplatesTab;
 use crate::app::view::load_spans;
-use crate::app::help::HelpPopup;
 use crate::cli;
+use ratatui::widgets::{Block, Borders};
 
 enum ZoomDirection {
     In,
@@ -50,6 +51,8 @@ pub struct App {
     tabs: Vec<Box<dyn tabs::Tab>>,
     tabs_area: Rect,
     show_help: bool,
+    search_query: String,
+    show_search: bool,
 }
 
 impl Widget for &mut App {
@@ -58,8 +61,20 @@ impl Widget for &mut App {
             return;
         }
 
+        let main_layout = if self.show_search {
+            Layout::vertical([
+                Constraint::Fill(1),
+                Constraint::Length(3),
+            ])
+            .split(area)
+        } else {
+            std::rc::Rc::from([area])
+        };
+
+        let content_area = main_layout[0];
+
         let layout = Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]);
-        let [top, main] = area.layout(&layout);
+        let [top, main] = content_area.layout(&layout);
 
         let top_layout =
             Layout::horizontal([Constraint::Max(8), Constraint::Fill(2), Constraint::Fill(1)]);
@@ -92,8 +107,24 @@ impl Widget for &mut App {
         self.tabs_area = tabs_area;
 
         let show_help = self.show_help;
+        let show_search = self.show_search;
+        let query = self.search_query.clone();
+
         let current_tab = self.get_current_tab();
         current_tab.render(main, buf);
+
+        if show_search {
+            let search_area = main_layout[1];
+            let search_block = Block::default()
+                .title(" Search (ID or Description) ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::LightGreen));
+            let inner_search = search_block.inner(search_area);
+            search_block.render(search_area, buf);
+            
+            let search_text = format!("{}█", query);
+            buf.set_string(inner_search.x, inner_search.y, &search_text, Style::default().fg(Color::LightGreen));
+        }
 
         if show_help {
             let help_popup = HelpPopup::new(current_tab.get_help());
@@ -121,6 +152,8 @@ impl Default for App {
             tabs,
             tabs_area: Rect::default(),
             show_help: false,
+            search_query: String::new(),
+            show_search: false,
         }
     }
 }
@@ -157,11 +190,39 @@ impl App {
             .contains(crossterm::event::KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(crossterm::event::KeyModifiers::ALT);
 
+        if self.show_search {
+            match key.code {
+                KeyCode::Esc | KeyCode::Enter => {
+                    self.show_search = false;
+                    self.search_query.clear();
+                    self.get_current_tab().set_search_query(String::new());
+                    return false;
+                }
+                KeyCode::Char(c) => {
+                    self.search_query.push(c);
+                    let query = self.search_query.clone();
+                    self.get_current_tab().set_search_query(query);
+                    return false;
+                }
+                KeyCode::Backspace => {
+                    self.search_query.pop();
+                    let query = self.search_query.clone();
+                    self.get_current_tab().set_search_query(query);
+                    return false;
+                }
+                _ => return false,
+            }
+        }
+
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') => return true,
             KeyCode::Char('c') | KeyCode::Char('C') if ctrl => return true,
             KeyCode::Char('h') | KeyCode::Char('H') => {
                 self.show_help = !self.show_help;
+                return false;
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                self.show_search = true;
                 return false;
             }
             KeyCode::Char('t') | KeyCode::Char('T') if alt => {

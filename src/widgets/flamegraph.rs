@@ -17,6 +17,7 @@ pub struct FlamegraphWidget<'a> {
     /// Terminal cell (col, row) → global span index.
     pub cell_map: &'a mut HashMap<(u16, u16), usize>,
     pub selected_span: Option<usize>,
+    pub search_query: Option<&'a str>,
 }
 
 impl FlamegraphWidget<'_> {
@@ -69,6 +70,7 @@ impl<'a> Widget for FlamegraphWidget<'a> {
                 row_skip,
                 selected_span: self.selected_span,
                 cell_map: self.cell_map,
+                search_query: self.search_query,
             }
             .render(track_area, buf);
         }

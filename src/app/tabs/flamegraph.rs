@@ -34,6 +34,7 @@ pub struct FlameGraphTab {
     pub viewport_height: u16,
     pub viewport_width: u16,
     pub content_height: u16,
+    pub search_query: Option<String>,
 }
 
 impl FlameGraphTab {
@@ -72,6 +73,7 @@ impl FlameGraphTab {
             viewport_height: 0,
             viewport_width: 0,
             content_height: 0,
+            search_query: None,
         }
     }
 
@@ -411,7 +413,7 @@ impl Tab for FlameGraphTab {
             KeyCode::Esc => self.selected_span = None,
             KeyCode::Tab => self.switch_track(HorizontalDirection::Next),
             KeyCode::BackTab => self.switch_track(HorizontalDirection::Previous),
-            KeyCode::Char('s') => self.toggle_sort_mode(),
+            KeyCode::Char('m') => self.toggle_sort_mode(),
             _ => {}
         }
         false
@@ -560,6 +562,7 @@ impl Tab for FlameGraphTab {
             scroll_offset: self.vertical_scroll,
             cell_map: &mut self.cell_span_map,
             selected_span,
+            search_query: self.search_query.as_deref(),
         }
         .render(graph_area, buf);
 
@@ -639,7 +642,15 @@ impl Tab for FlameGraphTab {
             ("Esc", "Clear selection"),
             ("Tab", "Next track"),
             ("Shift + Tab", "Previous track"),
-            ("s", "Toggle sort mode"),
+            ("m", "Toggle sort mode"),
         ]
+    }
+
+    fn set_search_query(&mut self, query: String) {
+        if query.is_empty() {
+            self.search_query = None;
+        } else {
+            self.search_query = Some(query);
+        }
     }
 }

@@ -12,4 +12,6 @@ pub trait Tab {
     fn render(&mut self, area: Rect, buf: &mut Buffer);
 
     fn get_help(&self) -> Vec<(&str, &str)>;
+
+    fn set_search_query(&mut self, query: String);
 }

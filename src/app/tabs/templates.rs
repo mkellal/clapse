@@ -35,6 +35,7 @@ pub struct TemplatesTab {
     pub viewport_width: u16,
     pub content_height: u16,
     pub counts: Vec<usize>,
+    pub search_query: Option<String>,
 }
 
 impl TemplatesTab {
@@ -77,6 +78,7 @@ impl TemplatesTab {
             viewport_width: 0,
             content_height: 0,
             counts,
+            search_query: None,
         }
     }
 
@@ -571,6 +573,7 @@ impl Tab for TemplatesTab {
             scroll_offset: self.vertical_scroll,
             cell_map: &mut self.cell_span_map,
             selected_span,
+            search_query: self.search_query.as_deref(),
         }
         .render(graph_area, buf);
 
@@ -643,6 +646,14 @@ impl Tab for TemplatesTab {
             ("Tab", "Next span"),
             ("Shift + Tab", "Previous span"),
         ]
+    }
+
+    fn set_search_query(&mut self, query: String) {
+        if query.is_empty() {
+            self.search_query = None;
+        } else {
+            self.search_query = Some(query);
+        }
     }
 }
 

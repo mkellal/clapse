@@ -55,6 +55,7 @@ pub struct TrackWidget<'a> {
     pub selected_span: Option<usize>,
     /// Terminal cell (col, row) → global span index.
     pub cell_map: &'a mut HashMap<(u16, u16), usize>,
+    pub search_query: Option<&'a str>,
 }
 
 impl<'a> Widget for TrackWidget<'a> {
@@ -98,6 +99,7 @@ impl<'a> Widget for TrackWidget<'a> {
             self.start_time,
             unit_row_skip,
             self.cell_map,
+            self.search_query,
         );
     }
 }
@@ -112,6 +114,7 @@ fn render_spans(
     start_time: f64,
     row_skip: u16,
     cell_map: &mut HashMap<(u16, u16), usize>,
+    search_query: Option<&str>,
 ) {
     if area.width == 0 || total_duration <= 0.0 {
         return;
@@ -193,6 +196,7 @@ fn render_spans(
             start_time,
             effective_start,
             selected_span_index: selected_span,
+            search_query,
         };
 
         let span_core_bounds = widget.render_with_tracker(buf, &mut subcell_tracker);
