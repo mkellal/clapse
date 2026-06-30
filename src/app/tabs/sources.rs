@@ -71,7 +71,7 @@ impl SourcesTab {
             start_time: 0.0,
             selected_span: None,
             cell_span_map: HashMap::new(),
-            order_by: OrderBy::StartTime,
+            order_by: OrderBy::Duration,
             vertical_scroll: 0,
             viewport_height: 0,
             viewport_width: 0,
@@ -256,15 +256,6 @@ impl SourcesTab {
         self.center_track(ti);
     }
 
-    fn toggle_sort_mode(&mut self) {
-        self.order_by = match self.order_by {
-            OrderBy::StartTime => OrderBy::Duration,
-            OrderBy::Duration => OrderBy::StartTime,
-        };
-        self.zoom_to_selected(Some(self.zoom));
-        self.center_selected_track();
-    }
-
     fn switch_track(&mut self, dir: HorizontalDirection) {
         let n = self.current_tracks().len();
         if n == 0 {
@@ -416,7 +407,6 @@ impl Tab for SourcesTab {
             KeyCode::Esc => self.selected_span = None,
             KeyCode::Tab => self.switch_track(HorizontalDirection::Next),
             KeyCode::BackTab => self.switch_track(HorizontalDirection::Previous),
-            KeyCode::Char('s') => self.toggle_sort_mode(),
             _ => {}
         }
         false
