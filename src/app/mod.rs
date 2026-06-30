@@ -13,12 +13,14 @@ use std::rc::Rc;
 pub mod span;
 pub mod tabs;
 pub mod view;
+pub mod help;
 
 use crate::app::span::Span;
 use crate::app::tabs::flamegraph::FlameGraphTab;
 use crate::app::tabs::sources::SourcesTab;
 use crate::app::tabs::templates::TemplatesTab;
 use crate::app::view::load_spans;
+use crate::app::help::HelpPopup;
 use crate::cli;
 
 enum ZoomDirection {
@@ -47,6 +49,7 @@ pub struct App {
     current_tab_index: usize,
     tabs: Vec<Box<dyn tabs::Tab>>,
     tabs_area: Rect,
+    show_help: bool,
 }
 
 impl Widget for &mut App {
@@ -88,8 +91,14 @@ impl Widget for &mut App {
 
         self.tabs_area = tabs_area;
 
+        let show_help = self.show_help;
         let current_tab = self.get_current_tab();
         current_tab.render(main, buf);
+
+        if show_help {
+            let help_popup = HelpPopup::new(current_tab.get_help());
+            help_popup.render(area, buf);
+        }
     }
 }
 
@@ -111,6 +120,7 @@ impl Default for App {
             current_tab_index: 0,
             tabs,
             tabs_area: Rect::default(),
+            show_help: false,
         }
     }
 }
@@ -150,11 +160,19 @@ impl App {
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') => return true,
             KeyCode::Char('c') | KeyCode::Char('C') if ctrl => return true,
+            KeyCode::Char('h') | KeyCode::Char('H') => {
+                self.show_help = !self.show_help;
+                return false;
+            }
             KeyCode::Char('t') | KeyCode::Char('T') if alt => {
                 self.current_tab_index = (self.current_tab_index + 1) % self.tabs.len();
                 return false;
             }
             _ => {
+                if self.show_help {
+                    self.show_help = false;
+                    return false;
+                }
                 let current_tab = self.get_current_tab();
                 return current_tab.handle_key_event(key);
             }

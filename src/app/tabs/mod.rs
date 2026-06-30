@@ -10,4 +10,6 @@ pub trait Tab {
     fn handle_mouse_event(&mut self, mouse: crossterm::event::MouseEvent);
 
     fn render(&mut self, area: Rect, buf: &mut Buffer);
+
+    fn get_help(&self) -> Vec<(&str, &str)>;
 }

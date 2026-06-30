@@ -624,6 +624,26 @@ impl Tab for TemplatesTab {
             }
         }
     }
+
+    fn get_help(&self) -> Vec<(&str, &str)> {
+        vec![
+            ("Ctrl + Up", "Zoom in"),
+            ("Ctrl + Down", "Zoom out"),
+            ("PageUp", "Zoom in (fast)"),
+            ("PageDown", "Zoom out (fast)"),
+            ("Ctrl + Left", "Pan left"),
+            ("Ctrl + Right", "Pan right"),
+            ("Left", "Previous sibling"),
+            ("Right", "Next sibling"),
+            ("Up", "Parent span"),
+            ("Down", "Child span"),
+            ("Ctrl + Space", "Reset zoom"),
+            ("Space", "Zoom to selection"),
+            ("Esc", "Clear selection"),
+            ("Tab", "Next span"),
+            ("Shift + Tab", "Previous span"),
+        ]
+    }
 }
 
 fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
