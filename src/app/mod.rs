@@ -102,8 +102,8 @@ impl Default for App {
 
         let tabs = vec![
             Box::new(FlameGraphTab::new(raw_spans.clone())) as Box<dyn tabs::Tab>,
-            Box::new(SourcesTab::new()) as Box<dyn tabs::Tab>,
-            Box::new(TemplatesTab::new()) as Box<dyn tabs::Tab>,
+            Box::new(SourcesTab::new(raw_spans.clone())) as Box<dyn tabs::Tab>,
+            Box::new(TemplatesTab::new(raw_spans.clone())) as Box<dyn tabs::Tab>,
         ];
 
         Self {

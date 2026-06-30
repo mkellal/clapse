@@ -450,8 +450,16 @@ impl Tab for FlameGraphTab {
                         .parent_index
                         .and_then(|pi| self.spans.get(pi))
                         .map(|p| p.duration);
+
+                    use crate::app::view::SpanView;
+                    let view = SpanView {
+                        span_index: si,
+                        ..Default::default()
+                    };
+
                     SpanDetails {
-                        span,
+                        spans: &self.spans,
+                        view: &view,
                         parent_duration,
                         total_duration,
                     }
@@ -596,8 +604,16 @@ impl Tab for FlameGraphTab {
                     .parent_index
                     .and_then(|pi| self.spans.get(pi))
                     .map(|p| p.duration);
+
+                use crate::app::view::SpanView;
+                let view = SpanView {
+                    span_index: si,
+                    ..Default::default()
+                };
+
                 SpanDetails {
-                    span,
+                    spans: &self.spans,
+                    view: &view,
                     parent_duration,
                     total_duration,
                 }

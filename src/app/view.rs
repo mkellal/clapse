@@ -21,7 +21,7 @@ pub enum OrderBy {
 }
 
 /// Positioning data for one span, precomputed for a given OrderBy mode.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SpanView {
     /// Global index into the flat spans array.
     pub span_index: usize,
@@ -33,6 +33,35 @@ pub struct SpanView {
     pub has_core_cells: bool,
     /// Set after each render: true if this span was rendered at all (including partial chars).
     pub was_displayed: bool,
+}
+
+#[derive(Clone, Default)]
+pub struct AggregateSpanView {
+    pub view: SpanView,
+    pub count: usize,
+}
+
+pub trait DetailProvider {
+    fn span_index(&self) -> usize;
+    fn count(&self) -> Option<usize>;
+}
+
+impl DetailProvider for SpanView {
+    fn span_index(&self) -> usize {
+        self.span_index
+    }
+    fn count(&self) -> Option<usize> {
+        None
+    }
+}
+
+impl DetailProvider for AggregateSpanView {
+    fn span_index(&self) -> usize {
+        self.view.span_index
+    }
+    fn count(&self) -> Option<usize> {
+        Some(self.count)
+    }
 }
 
 pub enum FollowingSpanDirection {

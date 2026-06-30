@@ -6,10 +6,12 @@ use ratatui::{
 };
 
 use crate::app::span::{Span, SpanType};
+use crate::app::view::DetailProvider;
 use crate::widgets::time_range::format_time;
 
-pub struct SpanDetails<'a> {
-    pub span: &'a Span,
+pub struct SpanDetails<'a, V: DetailProvider> {
+    pub spans: &'a [Span],
+    pub view: &'a V,
     pub parent_duration: Option<f64>,
     pub total_duration: f64,
 }
@@ -71,21 +73,21 @@ impl SpanType {
     }
 }
 
-impl<'a> SpanDetails<'a> {
+impl<'a, V: DetailProvider> SpanDetails<'a, V> {
     /// Compute the total height (including borders) needed to display all content at the given width.
     pub fn required_height(&self, area_width: u16) -> u16 {
         if area_width < 4 {
             return 3;
         }
+        let span = &self.spans[self.view.span_index()];
         let inner_width = (area_width - 2) as usize;
-        let label_lines = wrap_text(&self.span.label, inner_width).len() as u16;
-        let identifier_lines = if self.span.identifier != self.span.label {
-            wrap_text(&self.span.identifier, inner_width).len() as u16
+        let label_lines = wrap_text(&span.label, inner_width).len() as u16;
+        let identifier_lines = if span.identifier != span.label {
+            wrap_text(&span.identifier, inner_width).len() as u16
         } else {
             0
         };
-        let operation_lines = self
-            .span
+        let operation_lines = span
             .sublabel
             .as_deref()
             .map(|d| wrap_text(d, inner_width).len() as u16)
@@ -95,7 +97,7 @@ impl<'a> SpanDetails<'a> {
     }
 }
 
-impl<'a> Widget for SpanDetails<'a> {
+impl<'a, V: DetailProvider> Widget for SpanDetails<'a, V> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.height < 3 || area.width == 0 {
             return;
@@ -121,7 +123,7 @@ impl<'a> Widget for SpanDetails<'a> {
             return;
         }
         let inner_width = (inner_right - inner_x) as usize;
-        let span = self.span;
+        let span = &self.spans[self.view.span_index()];
 
         // ── Row 0: badge + time pills ────────────────────────────────────────
         let y0 = area.y + 1;
@@ -163,7 +165,15 @@ impl<'a> Widget for SpanDetails<'a> {
         let start = span.start_time;
         let end = span.start_time + span.duration;
         let mut pills: Vec<String> = Vec::new();
-        pills.push(format!(" ⏱  {} ", format_time(span.duration)));
+
+        if let Some(count) = self.view.count() {
+            pills.push(format!(" {} times ", count));
+            pills.push(format!(" ⏱ avg {} ", format_time(span.duration / count as f64)));
+            pills.push(format!(" ⏱ sum {} ", format_time(span.duration)));
+        } else {
+            pills.push(format!(" ⏱ {} ", format_time(span.duration)));
+        }
+
         if let Some(pd) = self.parent_duration {
             if pd > 0.0 {
                 let pct = span.duration / pd * 100.0;
@@ -174,7 +184,9 @@ impl<'a> Widget for SpanDetails<'a> {
             let pct = span.duration / self.total_duration * 100.0;
             pills.push(format!(" {:.3}% of total ", pct));
         }
-        pills.push(format!(" {} → {} ", format_time(start), format_time(end)));
+        if self.view.count().is_none() {
+            pills.push(format!(" {} → {} ", format_time(start), format_time(end)));
+        }
         let pill_style = Style::default()
             .fg(Color::Rgb(198, 208, 245))
             .bg(Color::Rgb(41, 44, 60));
