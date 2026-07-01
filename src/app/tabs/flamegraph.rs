@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
-use ratatui::widgets::Widget;
+use ratatui::widgets::{Block, Borders, Widget};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -443,6 +443,18 @@ impl Tab for FlameGraphTab {
         let total_duration = self.total_duration();
         let visible_duration = total_duration / self.zoom;
 
+        // ── bordered block around the whole tab ────────────────────────
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray));
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
+
+        // ── layout inside the border ───────────────────────────────────
         let scrollbar_height = 2;
         let details_height: u16 = if let Some(si) = self.selected_span {
             self.spans
@@ -465,32 +477,37 @@ impl Tab for FlameGraphTab {
                         parent_duration,
                         total_duration,
                     }
-                    .required_height(area.width)
+                    .required_height(inner.width)
                 })
                 .unwrap_or(0)
         } else {
             0
         };
-        let graph_height = area
+        let graph_height = inner
             .height
             .saturating_sub(scrollbar_height + details_height);
-        let vertical_scrollbar_width: u16 = if area.width > 1 { 1 } else { 0 };
-        let graph_width = area.width.saturating_sub(vertical_scrollbar_width);
 
-        let scrollbar_area = Rect::new(area.x, area.y, area.width, scrollbar_height);
-        let graph_area = Rect::new(area.x, area.y + scrollbar_height, graph_width, graph_height);
-        let vscrollbar_area = Rect::new(
-            area.x + graph_width,
-            area.y + scrollbar_height,
-            vertical_scrollbar_width,
-            graph_height,
-        );
+        let scrollbar_area = Rect::new(inner.x, inner.y, inner.width, scrollbar_height);
+        let graph_outer = Rect::new(inner.x, inner.y + scrollbar_height, inner.width, graph_height);
         let details_area = Rect::new(
-            area.x,
-            area.y + scrollbar_height + graph_height,
-            area.width,
+            inner.x,
+            inner.y + scrollbar_height + graph_height,
+            inner.width,
             details_height,
         );
+
+        let vertical_scrollbar_width: u16 = if graph_outer.width > 1 { 1 } else { 0 };
+        let graph_width = graph_outer.width.saturating_sub(vertical_scrollbar_width);
+
+        let vscrollbar_area = Rect::new(
+            graph_outer.x + graph_width,
+            graph_outer.y,
+            vertical_scrollbar_width,
+            graph_outer.height,
+        );
+
+        // Use graph_outer directly as the graph area (no nested border).
+        let graph_area = Rect::new(graph_outer.x, graph_outer.y, graph_width, graph_outer.height);
 
         let start_time = self.start_time;
         let scrollbar = DurationRange {
@@ -501,8 +518,8 @@ impl Tab for FlameGraphTab {
         scrollbar.render(scrollbar_area, buf);
 
         self.cell_span_map.clear();
-        self.viewport_height = graph_height;
-        self.viewport_width = graph_area.width;
+        self.viewport_height = graph_area.height;
+        self.viewport_width = graph_width;
         let order_by = self.order_by;
         let selected_span = self.selected_span;
 

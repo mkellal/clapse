@@ -1,4 +1,3 @@
-use rayon::prelude::*;
 use std::path::Path;
 
 use crate::{
@@ -293,21 +292,62 @@ pub fn parse_ninja_log(path: &Path) -> Option<Vec<UnitTrace>> {
 }
 
 // ---------------------------------------------------------------------------
+// Loading progress
+// ---------------------------------------------------------------------------
+
+/// Progress information sent during span loading.
+#[derive(Clone, Debug)]
+pub struct LoadProgress {
+    /// Bytes processed so far.
+    pub bytes_processed: u64,
+    /// Total bytes across all trace files.
+    pub total_bytes: u64,
+    /// Number of files processed so far.
+    pub files_processed: usize,
+    /// Total number of trace files.
+    pub total_files: usize,
+}
+
+// ---------------------------------------------------------------------------
 // Loading all spans into a flat Vec<Span>
 // ---------------------------------------------------------------------------
 
 /// Load all trace files in `build_dir` and return a single flat `Vec<Span>`
 /// with globally-consistent parent/children indices.
-pub fn load_spans(build_dir: &std::path::PathBuf) -> Vec<Span> {
+/// Reports progress via `progress_tx` after each file is processed.
+pub fn load_spans_with_progress(
+    build_dir: &std::path::PathBuf,
+    progress_tx: std::sync::mpsc::Sender<LoadProgress>,
+) -> Vec<Span> {
     let ninja_log_path = build_dir.join(".ninja_log");
     let ninja_traces: Vec<UnitTrace> = parse_ninja_log(&ninja_log_path).unwrap_or_default();
 
     let trace_files = get_trace_files(build_dir);
 
-    // Build one Vec<Span> per trace file in parallel (local indices 0..n).
-    let unit_spans_list: Vec<Vec<Span>> = trace_files
-        .par_iter()
-        .filter_map(|trace_file| {
+    // Compute total bytes for progress tracking.
+    let total_bytes: u64 = trace_files
+        .iter()
+        .filter_map(|p| std::fs::metadata(p).ok().map(|m| m.len()))
+        .sum();
+
+    let total_files = trace_files.len();
+
+    // Send initial progress.
+    let _ = progress_tx.send(LoadProgress {
+        bytes_processed: 0,
+        total_bytes,
+        files_processed: 0,
+        total_files,
+    });
+
+    let mut bytes_processed: u64 = 0;
+    let mut unit_spans_list: Vec<Vec<Span>> = Vec::with_capacity(total_files);
+
+    // Process files sequentially so we can report smooth progress.
+    for (file_idx, trace_file) in trace_files.iter().enumerate() {
+        let file_size = std::fs::metadata(trace_file).ok().map(|m| m.len()).unwrap_or(0);
+
+        let result = (|| {
             let name = clean_trace_file_path(trace_file, build_dir)
                 .unwrap_or_default()
                 .to_string_lossy()
@@ -344,8 +384,21 @@ pub fn load_spans(build_dir: &std::path::PathBuf) -> Vec<Span> {
             add_spans(&mut spans, &data, build_dir);
 
             Some(spans)
-        })
-        .collect();
+        })();
+
+        bytes_processed += file_size;
+
+        if let Some(spans) = result {
+            unit_spans_list.push(spans);
+        }
+
+        let _ = progress_tx.send(LoadProgress {
+            bytes_processed,
+            total_bytes,
+            files_processed: file_idx + 1,
+            total_files,
+        });
+    }
 
     // Merge into flat array, adjusting all indices by the unit's offset.
     let mut all_spans: Vec<Span> = Vec::new();
@@ -363,6 +416,13 @@ pub fn load_spans(build_dir: &std::path::PathBuf) -> Vec<Span> {
         all_spans.extend(unit_spans);
     }
     all_spans
+}
+
+/// Convenience wrapper that loads spans without progress reporting.
+#[allow(dead_code)]
+pub fn load_spans(build_dir: &std::path::PathBuf) -> Vec<Span> {
+    let (tx, _rx) = std::sync::mpsc::channel();
+    load_spans_with_progress(build_dir, tx)
 }
 
 // ---------------------------------------------------------------------------

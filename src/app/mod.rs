@@ -1,6 +1,5 @@
 use clap::Parser;
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
-use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use ratatui::DefaultTerminal;
 use ratatui::buffer::Buffer;
@@ -22,8 +21,9 @@ use crate::app::span::Span;
 use crate::app::tabs::flamegraph::FlameGraphTab;
 use crate::app::tabs::sources::SourcesTab;
 use crate::app::tabs::templates::TemplatesTab;
-use crate::app::view::load_spans;
+use crate::app::view::{LoadProgress, load_spans_with_progress};
 use crate::cli;
+use crate::widgets::start_screen::StartScreenWidget;
 
 enum ZoomDirection {
     In,
@@ -46,18 +46,43 @@ impl Drop for MouseCaptureGuard {
     }
 }
 
+/// Holds the state while spans are being loaded in a background thread.
+struct LoadingState {
+    progress_rx: std::sync::mpsc::Receiver<LoadProgress>,
+    current: LoadProgress,
+    thread: Option<std::thread::JoinHandle<Vec<Span>>>,
+}
+
 pub struct App {
-    // raw_spans: Rc<[Span]>,
     current_tab_index: usize,
     tabs: Vec<Box<dyn tabs::Tab>>,
     tabs_area: Rect,
     show_help: bool,
     search: SearchState,
+    /// Present while spans are being loaded from disk.
+    loading: Option<LoadingState>,
 }
 
 impl Widget for &mut App {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        // Render loading screen if spans are still being loaded.
+        if let Some(ref loading) = self.loading {
+            let total = loading.current.total_bytes.max(1) as f64;
+            let progress = loading.current.bytes_processed as f64 / total;
+            let msg = if loading.current.total_files > 0 {
+                format!(
+                    "Parsing files… ({}/{})",
+                    loading.current.files_processed,
+                    loading.current.total_files
+                )
+            } else {
+                String::from("Discovering trace files…")
+            };
+            StartScreenWidget { progress, message: msg }.render(area, buf);
             return;
         }
 
@@ -126,23 +151,30 @@ impl Widget for &mut App {
 impl Default for App {
     fn default() -> Self {
         let cli = cli::Cli::parse();
-        let spans: Vec<Span> = load_spans(&cli.build_dir);
+        let build_dir = cli.build_dir.clone();
 
-        let raw_spans: Rc<[Span]> = Rc::from(spans);
+        let (progress_tx, progress_rx) = std::sync::mpsc::channel();
 
-        let tabs = vec![
-            Box::new(FlameGraphTab::new(raw_spans.clone())) as Box<dyn tabs::Tab>,
-            Box::new(SourcesTab::new(raw_spans.clone())) as Box<dyn tabs::Tab>,
-            Box::new(TemplatesTab::new(raw_spans.clone())) as Box<dyn tabs::Tab>,
-        ];
+        let thread = std::thread::spawn(move || {
+            load_spans_with_progress(&build_dir, progress_tx)
+        });
 
         Self {
-            // raw_spans,
             current_tab_index: 0,
-            tabs,
+            tabs: Vec::new(),
             tabs_area: Rect::default(),
             show_help: false,
             search: SearchState::default(),
+            loading: Some(LoadingState {
+                progress_rx,
+                current: LoadProgress {
+                    bytes_processed: 0,
+                    total_bytes: 1,
+                    files_processed: 0,
+                    total_files: 0,
+                },
+                thread: Some(thread),
+            }),
         }
     }
 }
@@ -159,15 +191,78 @@ impl App {
 
     fn event_loop(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         loop {
-            let app = &mut *self;
-            terminal.draw(|frame| frame.render_widget(&mut *app, frame.area()))?;
-            match crossterm::event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    if self.handle_key_event(key) {
-                        break Ok(());
+            // ── poll loading progress ──────────────────────────────────
+            if let Some(ref mut loading) = self.loading {
+                // Drain all pending progress messages.
+                while let Ok(progress) = loading.progress_rx.try_recv() {
+                    loading.current = progress;
+                }
+
+                // Check whether the background thread has finished.
+                if let Some(handle) = loading.thread.take() {
+                    if handle.is_finished() {
+                        let raw_spans = handle.join().unwrap();
+                        let raw_spans: Rc<[Span]> = Rc::from(raw_spans);
+                        let tabs: Vec<Box<dyn tabs::Tab>> = vec![
+                            Box::new(FlameGraphTab::new(raw_spans.clone())),
+                            Box::new(SourcesTab::new(raw_spans.clone())),
+                            Box::new(TemplatesTab::new(raw_spans.clone())),
+                        ];
+                        self.tabs = tabs;
+                        self.loading = None;
+                    } else {
+                        // Put the handle back — thread still running.
+                        loading.thread = Some(handle);
                     }
                 }
-                Event::Mouse(mouse) => self.handle_mouse_event(mouse),
+            }
+
+            // ── render ─────────────────────────────────────────────────
+            let app = &mut *self;
+            terminal.draw(|frame| frame.render_widget(&mut *app, frame.area()))?;
+
+            // ── input ──────────────────────────────────────────────────
+            // During loading, poll with a timeout so the progress bar
+            // redraws even when the user isn't pressing keys.
+            let event = if self.loading.is_some() {
+                if crossterm::event::poll(std::time::Duration::from_millis(100))? {
+                    Some(crossterm::event::read()?)
+                } else {
+                    None
+                }
+            } else {
+                Some(crossterm::event::read()?)
+            };
+
+            match event {
+                Some(Event::Key(key)) if key.kind == KeyEventKind::Press => {
+                    // During loading, only quit keys are handled.
+                    if self.loading.is_some() {
+                        match key.code {
+                            KeyCode::Char('q' | 'Q') => return Ok(()),
+                            KeyCode::Char('c' | 'C')
+                                if key
+                                    .modifiers
+                                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                            {
+                                return Ok(())
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
+                    if self.handle_key_event(key) {
+                        return Ok(());
+                    }
+                }
+                Some(Event::Mouse(mouse)) => {
+                    if self.loading.is_some() {
+                        continue;
+                    }
+                    self.handle_mouse_event(mouse);
+                }
+                None => {} // poll timeout — just re-render
                 _ => {}
             }
         }
