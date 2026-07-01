@@ -239,40 +239,38 @@ fn build_template_tree(
 /// Aggregate raw template/class spans into a hierarchical tree.
 /// Returns (new_spans, counts).
 fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
-    // Collect template/class spans and group by (template name, arg count).
-    // Grouping by arg count prevents mixing 0-arg spans (e.g. "std::vector")
-    // with 1-arg spans (e.g. "std::vector<int>") in the same tree.
-    let mut by_key: HashMap<(String, usize), Vec<usize>> = HashMap::new();
+    // ── Pass 1: group all spans by bare template name ──────────────────────
+    let mut by_base_name: HashMap<String, Vec<usize>> = HashMap::new();
     for (i, span) in raw_spans.iter().enumerate() {
         if span.type_ == SpanType::Template || span.type_ == SpanType::Class {
-            let (name, args) = parse_template_identifier(&span.identifier);
-            let key = (name.to_string(), args.len());
-            by_key.entry(key).or_default().push(i);
+            let (name, _) = parse_template_identifier(&span.identifier);
+            by_base_name.entry(name.to_string()).or_default().push(i);
         }
     }
 
     let mut new_spans: Vec<Span> = Vec::new();
     let mut counts: Vec<usize> = Vec::new();
 
-    // Sort groups for stable output (longest total duration first).
-    let mut sorted_keys: Vec<((String, usize), f64)> = by_key
+    // Sort base names for stable output (longest total duration first).
+    let mut sorted_names: Vec<(String, f64)> = by_base_name
         .iter()
-        .map(|(key, indices)| {
-            let total_dur: f64 = indices.iter().map(|&i| raw_spans[i].duration).sum();
-            (key.clone(), total_dur)
+        .map(|(name, indices)| {
+            let dur: f64 = indices.iter().map(|&i| raw_spans[i].duration).sum();
+            (name.clone(), dur)
         })
         .collect();
-    sorted_keys.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    sorted_names.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-    for ((name, _arg_count), _) in &sorted_keys {
-        let indices = &by_key[&(name.clone(), *_arg_count)];
+    for (base_name, _) in &sorted_names {
+        let indices = &by_base_name[base_name];
 
-        // Group by arg tuple: (duration_sum, occurrence_count, type, sublabel)
-        let mut arg_groups: HashMap<Vec<String>, AggEntry> = HashMap::new();
+        // ── Pass 2: within this base name, group by arg_count → arg_tuple → AggEntry
+        let mut by_arg_count: HashMap<usize, HashMap<Vec<String>, AggEntry>> = HashMap::new();
         for &i in indices {
             let span = &raw_spans[i];
             let (_, args) = parse_template_identifier(&span.identifier);
-            let entry = arg_groups.entry(args).or_insert_with(|| AggEntry {
+            let arg_map = by_arg_count.entry(args.len()).or_default();
+            let entry = arg_map.entry(args).or_insert_with(|| AggEntry {
                 duration: 0.0,
                 count: 0,
                 span_type: span.type_,
@@ -280,18 +278,99 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
             });
             entry.duration += span.duration;
             entry.count += 1;
-            // Keep the sublabel from the entry with the larger individual duration.
             if span.duration > entry.duration - span.duration {
                 entry.span_type = span.type_;
                 entry.sublabel = span.sublabel.clone().unwrap_or_default();
             }
         }
 
-        if arg_groups.is_empty() {
+        if by_arg_count.is_empty() {
             continue;
         }
 
-        build_template_tree(name, &arg_groups, &[], 0, None, &mut new_spans, &mut counts);
+        // ── Single arg count → existing flat behaviour (no top-level wrapper)
+        if by_arg_count.len() == 1 {
+            let (_, arg_groups) = by_arg_count.into_iter().next().unwrap();
+            build_template_tree(base_name, &arg_groups, &[], 0, None, &mut new_spans, &mut counts);
+            continue;
+        }
+
+        // ── Multiple arg counts → create top-level parent, then one child per arg count
+        let top_total_dur: f64 = by_arg_count
+            .values()
+            .flat_map(|m| m.values())
+            .map(|e| e.duration)
+            .sum();
+        let top_total_cnt: usize = by_arg_count
+            .values()
+            .flat_map(|m| m.values())
+            .map(|e| e.count)
+            .sum();
+        // Pick dominant type/sublabel for the top-level parent.
+        let top_dominant = by_arg_count
+            .values()
+            .flat_map(|m| m.values())
+            .max_by(|a, b| a.duration.partial_cmp(&b.duration).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|e| (e.span_type, e.sublabel.clone()))
+            .unwrap_or((SpanType::Template, "Template".to_string()));
+
+        let top_index = push_span(
+            &mut new_spans, &mut counts,
+            base_name.clone(), base_name.clone(),
+            top_total_dur, top_total_cnt,
+            0, None,
+            top_dominant.0, top_dominant.1,
+        );
+
+        // Sort arg counts by total duration (descending) for stable output.
+        let mut sorted_counts: Vec<(usize, f64)> = by_arg_count
+            .iter()
+            .map(|(ac, m)| (*ac, m.values().map(|e| e.duration).sum()))
+            .collect();
+        sorted_counts.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        for (arg_count, _) in sorted_counts {
+            let arg_groups = by_arg_count.remove(&arg_count).unwrap();
+
+            if arg_count == 0 {
+                // Zero-arg: create a concrete leaf directly (no wildcard wrapper).
+                let entry = arg_groups.into_values().next().unwrap();
+                let child_idx = push_span(
+                    &mut new_spans, &mut counts,
+                    base_name.clone(), base_name.clone(),
+                    entry.duration, entry.count,
+                    1, Some(top_index),
+                    entry.span_type, entry.sublabel,
+                );
+                new_spans[top_index].children_indices.push(child_idx);
+            } else {
+                // N-arg: create a wildcard node at depth 1, then build subtree at depth 2.
+                let wildcard_id = build_wildcard_identifier(base_name, &[], arg_count);
+                let child_total_dur: f64 = arg_groups.values().map(|e| e.duration).sum();
+                let child_total_cnt: usize = arg_groups.values().map(|e| e.count).sum();
+                let child_dominant = arg_groups
+                    .values()
+                    .max_by(|a, b| a.duration.partial_cmp(&b.duration).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|e| (e.span_type, e.sublabel.clone()))
+                    .unwrap_or((SpanType::Template, "Template".to_string()));
+
+                let wildcard_index = push_span(
+                    &mut new_spans, &mut counts,
+                    wildcard_id.clone(), wildcard_id,
+                    child_total_dur, child_total_cnt,
+                    1, Some(top_index),
+                    child_dominant.0, child_dominant.1,
+                );
+                new_spans[top_index].children_indices.push(wildcard_index);
+
+                let subtree_root = build_template_tree(
+                    base_name, &arg_groups, &[],
+                    2, Some(wildcard_index),
+                    &mut new_spans, &mut counts,
+                );
+                new_spans[wildcard_index].children_indices.push(subtree_root);
+            }
+        }
     }
 
     // Assign start_time positions in duration order: root spans (parent_index=None)
@@ -307,7 +386,6 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
 
     // Position children: each parent's children are laid out sequentially starting
     // from the parent's start_time.
-    // Process in order so that parents are positioned before children.
     for i in 0..new_spans.len() {
         let parent_start = new_spans[i].start_time;
         let mut cursor = parent_start;
