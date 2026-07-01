@@ -3,7 +3,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::app::ZoomDirection;
@@ -20,14 +20,11 @@ use crate::widgets::track::TrackInput;
 
 pub struct TemplatesTab {
     pub spans: Rc<[Span]>,
-    pub tracks_start_time: Vec<Vec<SpanView>>,
     pub tracks_by_duration: Vec<Vec<SpanView>>,
-    /// root_span_index → track index, for O(1) track lookup.
     pub root_track_map: HashMap<usize, usize>,
     pub zoom: f64,
     pub start_time: f64,
     pub selected_span: Option<usize>,
-    /// Maps terminal cell (col, row) → global span index.
     pub cell_span_map: HashMap<(u16, u16), usize>,
     pub vertical_scroll: u16,
     pub viewport_height: u16,
@@ -37,13 +34,9 @@ pub struct TemplatesTab {
 }
 
 // ---------------------------------------------------------------------------
-// Template identifier parsing
+// Identifier parsing
 // ---------------------------------------------------------------------------
 
-/// Parse a template identifier like `"temp1<char>"` into `("temp1", ["char"])`
-/// or `"temp3<char, int>"` into `("temp3", ["char", "int"])`.
-/// For identifiers without angle brackets (e.g. `"_M_cache"`), returns the
-/// whole string as the name with an empty args vector.
 fn parse_template_identifier(identifier: &str) -> (&str, Vec<String>) {
     match (identifier.find('<'), identifier.rfind('>')) {
         (Some(open), Some(close)) if close > open => {
@@ -56,7 +49,6 @@ fn parse_template_identifier(identifier: &str) -> (&str, Vec<String>) {
     }
 }
 
-/// Build the identifier string for a concrete template span.
 fn concrete_identifier(name: &str, args: &[String]) -> String {
     if args.is_empty() {
         name.to_string()
@@ -64,9 +56,7 @@ fn concrete_identifier(name: &str, args: &[String]) -> String {
         format!("{}<{}>", name, args.join(", "))
     }
 }
-/// Build a wildcard identifier from a prefix of known args.
-/// e.g. `prefix=["char"]`, `total_args=2` → `"temp3<char, *>"`
-/// If total_args == 0, returns just the name.
+
 fn build_wildcard_identifier(name: &str, prefix: &[String], total_args: usize) -> String {
     if total_args == 0 {
         return name.to_string();
@@ -88,27 +78,23 @@ fn build_wildcard_identifier(name: &str, prefix: &[String], total_args: usize) -
     id
 }
 
-/// Aggregated data for a group of template/class spans with the same args.
+// ---------------------------------------------------------------------------
+// Aggregation data
+// ---------------------------------------------------------------------------
+
 #[derive(Clone)]
 struct AggEntry {
     duration: f64,
-    count: usize,
+    occurrences: usize,
+    tu_count: usize,
     span_type: SpanType,
     sublabel: String,
 }
 
-impl AggEntry {
-    fn merge(&mut self, other: &AggEntry) {
-        self.duration += other.duration;
-        self.count += other.count;
-        // Keep the sublabel from the entry with the larger individual duration.
-        if other.duration > self.duration - other.duration {
-            self.sublabel = other.sublabel.clone();
-        }
-    }
-}
+// ---------------------------------------------------------------------------
+// Span builder
+// ---------------------------------------------------------------------------
 
-/// Helper: push a new span and return its index.
 fn push_span(
     new_spans: &mut Vec<Span>,
     counts: &mut Vec<usize>,
@@ -138,12 +124,10 @@ fn push_span(
     index
 }
 
-/// Recursively build a hierarchical aggregation for one template name.
-///
-/// `entries`: map from full arg tuple → AggEntry
-/// `prefix`: arg values fixed so far (used for matching, NOT visual depth)
-/// `visual_depth`: nesting level of the next created node
-/// Returns the span index of the node created (or a child if compression occurred).
+// ---------------------------------------------------------------------------
+// Arg-based wildcard hierarchy builder
+// ---------------------------------------------------------------------------
+
 fn build_template_tree(
     name: &str,
     entries: &HashMap<Vec<String>, AggEntry>,
@@ -154,81 +138,97 @@ fn build_template_tree(
     counts: &mut Vec<usize>,
 ) -> usize {
     let total_args = entries.keys().next().map(|a| a.len()).unwrap_or(0);
-    let pos = prefix.len(); // which arg position we are grouping on
+    let pos = prefix.len();
 
-    // Collect entries matching the current prefix.
     let matching: Vec<(&Vec<String>, &AggEntry)> = entries
         .iter()
         .filter(|(args, _)| args.len() == total_args && args[..pos] == *prefix)
         .collect();
 
-    // Single concrete variant → leaf span.
     if matching.len() == 1 {
         let (args, entry) = matching[0];
         let identifier = concrete_identifier(name, args);
+        let label = identifier.clone();
         return push_span(
-            new_spans, counts,
-            identifier.clone(), identifier,
-            entry.duration, entry.count,
-            visual_depth, parent_index,
-            entry.span_type, entry.sublabel.clone(),
+            new_spans,
+            counts,
+            identifier,
+            label,
+            entry.duration,
+            entry.tu_count,
+            visual_depth,
+            parent_index,
+            entry.span_type,
+            entry.sublabel.clone(),
         );
     }
 
-    // Group by the next arg value.
     let mut groups: HashMap<&String, Vec<(&Vec<String>, &AggEntry)>> = HashMap::new();
     for item in &matching {
         groups.entry(&item.0[pos]).or_default().push(*item);
     }
 
-    // All share the same next arg → compress: no node created here,
-    // recurse with same visual_depth so the eventual leaf lands at the right level.
     if groups.len() == 1 {
         let val = groups.keys().next().unwrap();
         let mut new_prefix = prefix.to_vec();
         new_prefix.push((*val).clone());
         return build_template_tree(
-            name, entries, &new_prefix,
-            visual_depth, parent_index,
-            new_spans, counts,
+            name,
+            entries,
+            &new_prefix,
+            visual_depth,
+            parent_index,
+            new_spans,
+            counts,
         );
     }
 
-    // Multiple distinct values at this position → create a wildcard aggregate node.
-    let total_duration: f64 = matching.iter().map(|(_, e)| e.duration).sum();
-    let total_count: usize = matching.iter().map(|(_, e)| e.count).sum();
+    let total_dur: f64 = matching.iter().map(|(_, e)| e.duration).sum();
+    let total_tus: usize = matching.iter().map(|(_, e)| e.tu_count).sum();
     let identifier = build_wildcard_identifier(name, prefix, total_args);
+    let label = identifier.clone();
 
-    // Pick dominant type/sublabel from the largest child.
     let dominant = matching
         .iter()
-        .max_by(|a, b| a.1.duration.partial_cmp(&b.1.duration).unwrap_or(std::cmp::Ordering::Equal))
+        .max_by(|a, b| {
+            a.1.duration
+                .partial_cmp(&b.1.duration)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
         .map(|(_, e)| (e.span_type, e.sublabel.clone()))
-        .unwrap_or((SpanType::Template, "Template".to_string()));
+        .unwrap_or((SpanType::Template, "Instantiation".to_string()));
 
     let index = push_span(
-        new_spans, counts,
-        identifier.clone(), identifier,
-        total_duration, total_count,
-        visual_depth, parent_index,
-        dominant.0, dominant.1,
+        new_spans,
+        counts,
+        identifier,
+        label,
+        total_dur,
+        total_tus,
+        visual_depth,
+        parent_index,
+        dominant.0,
+        dominant.1,
     );
 
-    // Recurse for each distinct value group (longest duration first).
     let mut sorted_keys: Vec<&String> = groups.keys().copied().collect();
     sorted_keys.sort_by(|a, b| {
-        let dur_a: f64 = groups[a].iter().map(|(_, e)| e.duration).sum();
-        let dur_b: f64 = groups[b].iter().map(|(_, e)| e.duration).sum();
-        dur_b.partial_cmp(&dur_a).unwrap_or(std::cmp::Ordering::Equal)
+        let da: f64 = groups[a].iter().map(|(_, e)| e.duration).sum();
+        let db: f64 = groups[b].iter().map(|(_, e)| e.duration).sum();
+        db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
     });
 
     for val in sorted_keys {
         let mut new_prefix = prefix.to_vec();
         new_prefix.push(val.clone());
         let child_idx = build_template_tree(
-            name, entries, &new_prefix,
-            visual_depth + 1, Some(index),
-            new_spans, counts,
+            name,
+            entries,
+            &new_prefix,
+            visual_depth + 1,
+            Some(index),
+            new_spans,
+            counts,
         );
         new_spans[index].children_indices.push(child_idx);
     }
@@ -236,146 +236,135 @@ fn build_template_tree(
     index
 }
 
-/// Aggregate raw template/class spans into a hierarchical tree.
-/// Returns (new_spans, counts).
+// ---------------------------------------------------------------------------
+// Aggregation
+// ---------------------------------------------------------------------------
+
+fn is_instantiation(span: &Span) -> bool {
+    span.sublabel.as_deref() == Some("Instantiation")
+}
+
+fn is_template_or_class(st: SpanType) -> bool {
+    st == SpanType::Template || st == SpanType::Class
+}
+
+/// A root instantiation is a template/class instantiation whose immediate
+/// parent is NOT a template/class span (i.e. it's the top of the chain).
+fn is_root_instantiation(raw_spans: &[Span], idx: usize) -> bool {
+    let span = &raw_spans[idx];
+    if !is_instantiation(span) || !is_template_or_class(span.type_) {
+        return false;
+    }
+    match span.parent_index {
+        Some(pi) => !is_template_or_class(raw_spans[pi].type_),
+        None => true,
+    }
+}
+
 fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
-    // ── Pass 1: group all spans by bare template name ──────────────────────
-    let mut by_base_name: HashMap<String, Vec<usize>> = HashMap::new();
-    for (i, span) in raw_spans.iter().enumerate() {
-        if span.type_ == SpanType::Template || span.type_ == SpanType::Class {
-            let (name, _) = parse_template_identifier(&span.identifier);
-            by_base_name.entry(name.to_string()).or_default().push(i);
+    // ── Collect root instantiations, grouped by (base_name, arg_count) ────
+    let mut by_key: HashMap<(String, usize), HashMap<Vec<String>, AggEntry>> = HashMap::new();
+
+    for (_i, span) in raw_spans.iter().enumerate() {
+        if !is_root_instantiation(raw_spans, _i) {
+            continue;
         }
+        let (name, args) = parse_template_identifier(&span.identifier);
+        let key = (name.to_string(), args.len());
+        let arg_map = by_key.entry(key).or_default();
+        let entry = arg_map.entry(args.clone()).or_insert_with(|| AggEntry {
+            duration: 0.0,
+            occurrences: 0,
+            tu_count: 0,
+            span_type: span.type_,
+            sublabel: span.sublabel.clone().unwrap_or_default(),
+        });
+        entry.duration += span.duration;
+        entry.occurrences += 1;
+    }
+
+    // ── Count distinct TUs per (name, args) ──────────────────────────────
+    let mut tu_sets: HashMap<(String, Vec<String>), HashSet<usize>> = HashMap::new();
+    for (_i, span) in raw_spans.iter().enumerate() {
+        if !is_root_instantiation(raw_spans, _i) {
+            continue;
+        }
+        let (name, args) = parse_template_identifier(&span.identifier);
+        let set = tu_sets.entry((name.to_string(), args.clone())).or_default();
+        set.insert(span.root_span_index);
+    }
+    for ((name, args), set) in &tu_sets {
+        let key = (name.clone(), args.len());
+        if let Some(arg_map) = by_key.get_mut(&key) {
+            if let Some(entry) = arg_map.get_mut(args) {
+                entry.tu_count = set.len();
+            }
+        }
+    }
+
+    // ── Group (name, arg_count) entries by bare name ─────────────────────
+    let mut by_base: HashMap<String, HashMap<usize, HashMap<Vec<String>, AggEntry>>> = HashMap::new();
+    for ((name, arg_count), arg_map) in by_key {
+        by_base.entry(name).or_default().insert(arg_count, arg_map);
     }
 
     let mut new_spans: Vec<Span> = Vec::new();
     let mut counts: Vec<usize> = Vec::new();
 
-    // Sort base names for stable output (longest total duration first).
-    let mut sorted_names: Vec<(String, f64)> = by_base_name
+    // Sort base names by total duration desc.
+    let mut sorted_bases: Vec<(String, f64)> = by_base
         .iter()
-        .map(|(name, indices)| {
-            let dur: f64 = indices.iter().map(|&i| raw_spans[i].duration).sum();
+        .map(|(name, ac_map)| {
+            let dur: f64 = ac_map.values().flat_map(|m| m.values()).map(|e| e.duration).sum();
             (name.clone(), dur)
         })
         .collect();
-    sorted_names.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    sorted_bases.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-    for (base_name, _) in &sorted_names {
-        let indices = &by_base_name[base_name];
+    for (base_name, _) in &sorted_bases {
+        let mut ac_map = by_base.remove(base_name).unwrap();
 
-        // ── Pass 2: within this base name, group by arg_count → arg_tuple → AggEntry
-        let mut by_arg_count: HashMap<usize, HashMap<Vec<String>, AggEntry>> = HashMap::new();
-        for &i in indices {
-            let span = &raw_spans[i];
-            let (_, args) = parse_template_identifier(&span.identifier);
-            let arg_map = by_arg_count.entry(args.len()).or_default();
-            let entry = arg_map.entry(args).or_insert_with(|| AggEntry {
-                duration: 0.0,
-                count: 0,
-                span_type: span.type_,
-                sublabel: span.sublabel.clone().unwrap_or_default(),
-            });
-            entry.duration += span.duration;
-            entry.count += 1;
-            if span.duration > entry.duration - span.duration {
-                entry.span_type = span.type_;
-                entry.sublabel = span.sublabel.clone().unwrap_or_default();
-            }
-        }
+        if ac_map.len() == 1 {
+            // Single arg count → no top-level wrapper needed.
+            let (_, arg_map) = ac_map.into_iter().next().unwrap();
+            build_template_tree(base_name, &arg_map, &[], 0, None, &mut new_spans, &mut counts);
+        } else {
+            // Multiple arg counts → create bare-name top-level parent.
+            let total_dur: f64 = ac_map.values().flat_map(|m| m.values()).map(|e| e.duration).sum();
+            let total_tus: usize = ac_map.values().flat_map(|m| m.values()).map(|e| e.tu_count).sum();
+            let dominant = ac_map.values().flat_map(|m| m.values())
+                .max_by(|a, b| a.duration.partial_cmp(&b.duration).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|e| (e.span_type, e.sublabel.clone()))
+                .unwrap_or((SpanType::Template, "Instantiation".to_string()));
+            let label = base_name.clone();
 
-        if by_arg_count.is_empty() {
-            continue;
-        }
+            let top_idx = push_span(
+                &mut new_spans, &mut counts,
+                base_name.clone(), label,
+                total_dur, total_tus,
+                0, None,
+                dominant.0, dominant.1,
+            );
 
-        // ── Single arg count → existing flat behaviour (no top-level wrapper)
-        if by_arg_count.len() == 1 {
-            let (_, arg_groups) = by_arg_count.into_iter().next().unwrap();
-            build_template_tree(base_name, &arg_groups, &[], 0, None, &mut new_spans, &mut counts);
-            continue;
-        }
+            // Sort arg counts by total duration desc.
+            let mut sorted_ac: Vec<(usize, f64)> = ac_map.iter()
+                .map(|(ac, m)| (*ac, m.values().map(|e| e.duration).sum()))
+                .collect();
+            sorted_ac.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        // ── Multiple arg counts → create top-level parent, then one child per arg count
-        let top_total_dur: f64 = by_arg_count
-            .values()
-            .flat_map(|m| m.values())
-            .map(|e| e.duration)
-            .sum();
-        let top_total_cnt: usize = by_arg_count
-            .values()
-            .flat_map(|m| m.values())
-            .map(|e| e.count)
-            .sum();
-        // Pick dominant type/sublabel for the top-level parent.
-        let top_dominant = by_arg_count
-            .values()
-            .flat_map(|m| m.values())
-            .max_by(|a, b| a.duration.partial_cmp(&b.duration).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|e| (e.span_type, e.sublabel.clone()))
-            .unwrap_or((SpanType::Template, "Template".to_string()));
-
-        let top_index = push_span(
-            &mut new_spans, &mut counts,
-            base_name.clone(), base_name.clone(),
-            top_total_dur, top_total_cnt,
-            0, None,
-            top_dominant.0, top_dominant.1,
-        );
-
-        // Sort arg counts by total duration (descending) for stable output.
-        let mut sorted_counts: Vec<(usize, f64)> = by_arg_count
-            .iter()
-            .map(|(ac, m)| (*ac, m.values().map(|e| e.duration).sum()))
-            .collect();
-        sorted_counts.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        for (arg_count, _) in sorted_counts {
-            let arg_groups = by_arg_count.remove(&arg_count).unwrap();
-
-            if arg_count == 0 {
-                // Zero-arg: create a concrete leaf directly (no wildcard wrapper).
-                let entry = arg_groups.into_values().next().unwrap();
-                let child_idx = push_span(
-                    &mut new_spans, &mut counts,
-                    base_name.clone(), base_name.clone(),
-                    entry.duration, entry.count,
-                    1, Some(top_index),
-                    entry.span_type, entry.sublabel,
-                );
-                new_spans[top_index].children_indices.push(child_idx);
-            } else {
-                // N-arg: create a wildcard node at depth 1, then build subtree at depth 2.
-                let wildcard_id = build_wildcard_identifier(base_name, &[], arg_count);
-                let child_total_dur: f64 = arg_groups.values().map(|e| e.duration).sum();
-                let child_total_cnt: usize = arg_groups.values().map(|e| e.count).sum();
-                let child_dominant = arg_groups
-                    .values()
-                    .max_by(|a, b| a.duration.partial_cmp(&b.duration).unwrap_or(std::cmp::Ordering::Equal))
-                    .map(|e| (e.span_type, e.sublabel.clone()))
-                    .unwrap_or((SpanType::Template, "Template".to_string()));
-
-                let wildcard_index = push_span(
-                    &mut new_spans, &mut counts,
-                    wildcard_id.clone(), wildcard_id,
-                    child_total_dur, child_total_cnt,
-                    1, Some(top_index),
-                    child_dominant.0, child_dominant.1,
-                );
-                new_spans[top_index].children_indices.push(wildcard_index);
-
-                let subtree_root = build_template_tree(
-                    base_name, &arg_groups, &[],
-                    2, Some(wildcard_index),
+            for (arg_count, _) in sorted_ac {
+                let arg_map = ac_map.remove(&arg_count).unwrap();
+                let root_idx = build_template_tree(
+                    base_name, &arg_map, &[],
+                    1, Some(top_idx),
                     &mut new_spans, &mut counts,
                 );
-                new_spans[wildcard_index].children_indices.push(subtree_root);
+                new_spans[top_idx].children_indices.push(root_idx);
             }
         }
     }
 
-    // Assign start_time positions in duration order: root spans (parent_index=None)
-    // are laid out sequentially; children are positioned relative to their parent's
-    // start_time.
+    // ── Assign start_time positions ──────────────────────────────────────
     let mut root_offset = 0.0f64;
     for i in 0..new_spans.len() {
         if new_spans[i].parent_index.is_none() {
@@ -383,9 +372,6 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
             root_offset += new_spans[i].duration;
         }
     }
-
-    // Position children: each parent's children are laid out sequentially starting
-    // from the parent's start_time.
     for i in 0..new_spans.len() {
         let parent_start = new_spans[i].start_time;
         let mut cursor = parent_start;
@@ -395,8 +381,6 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
             cursor += new_spans[ci].duration;
         }
     }
-
-    // Fix root_span_index: walk up to find the root ancestor.
     for i in 0..new_spans.len() {
         let mut curr = i;
         while let Some(pi) = new_spans[curr].parent_index {
@@ -418,8 +402,6 @@ impl TemplatesTab {
         let spans: Rc<[Span]> = Rc::from(aggregated);
 
         let mut track_roots = schedule_spans(&spans);
-
-        // Sort tracks: longest total duration first.
         track_roots.sort_by(|a, b| {
             let dur =
                 |roots: &Vec<usize>| -> f64 { roots.iter().map(|&i| spans[i].duration).sum() };
@@ -428,7 +410,7 @@ impl TemplatesTab {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        let (tracks_start_time, tracks_by_duration) = build_track_views(&spans, &track_roots);
+        let (_tracks_start_time, tracks_by_duration) = build_track_views(&spans, &track_roots);
 
         let mut root_track_map = HashMap::new();
         for (ti, roots) in track_roots.iter().enumerate() {
@@ -439,7 +421,6 @@ impl TemplatesTab {
 
         Self {
             spans,
-            tracks_start_time,
             tracks_by_duration,
             root_track_map,
             zoom: 1.0,
@@ -454,7 +435,6 @@ impl TemplatesTab {
         }
     }
 
-    /// Templates tab is always ordered by duration.
     fn current_tracks(&self) -> &[Vec<SpanView>] {
         &self.tracks_by_duration
     }
@@ -480,7 +460,6 @@ impl TemplatesTab {
         let si = match self.selected_span {
             Some(idx) => idx,
             None => {
-                // Init to first displayed root span.
                 let first = self
                     .current_tracks()
                     .iter()
@@ -501,7 +480,6 @@ impl TemplatesTab {
                 };
 
                 if self.spans[si].parent_index.is_none() {
-                    // Root span: navigate between visible roots in the same track.
                     let Some(ti) = self.track_index_for_span(si) else {
                         return;
                     };
@@ -632,7 +610,6 @@ impl TemplatesTab {
             HorizontalDirection::Next => (current_ti + 1) % n,
             HorizontalDirection::Previous => (current_ti + n - 1) % n,
         };
-        // Find first visible root span in the target track.
         let first_visible = {
             let views = &self.tracks_by_duration[new_ti];
             let mut seen = std::collections::HashSet::new();
@@ -680,7 +657,6 @@ impl TemplatesTab {
             Some(s) => s.duration,
             None => return,
         };
-
         let effective_start = {
             let ti = match self.track_index_for_span(si) {
                 Some(ti) => ti,
@@ -692,7 +668,6 @@ impl TemplatesTab {
                 None => return,
             }
         };
-
         let span_center = effective_start + span_duration / 2.0;
         let new_visible = span_duration / 0.75;
         let total = self.total_duration();
@@ -802,7 +777,6 @@ impl Tab for TemplatesTab {
                         .parent_index
                         .and_then(|pi| self.spans.get(pi))
                         .map(|p| p.duration);
-
                     let view = AggregateSpanView {
                         view: SpanView {
                             span_index: si,
@@ -810,7 +784,6 @@ impl Tab for TemplatesTab {
                         },
                         count: self.counts[si],
                     };
-
                     SpanDetails {
                         spans: &self.spans,
                         view: &view,
@@ -844,23 +817,22 @@ impl Tab for TemplatesTab {
             details_height,
         );
 
-        let start_time = self.start_time;
-        let scrollbar = DurationRange {
+        DurationRange {
             total_duration,
             start: self.start_time,
             visible_duration,
-        };
-        scrollbar.render(scrollbar_area, buf);
+        }
+        .render(scrollbar_area, buf);
 
         self.cell_span_map.clear();
         self.viewport_height = graph_height;
         self.viewport_width = graph_area.width;
         let selected_span = self.selected_span;
+        let start_time = self.start_time;
 
         use crate::widgets::track::track_content_height;
         let label_height: u16 = 1;
 
-        // Compute per-track heights
         let heights: Vec<u16> = self
             .tracks_by_duration
             .iter()
@@ -870,7 +842,6 @@ impl Tab for TemplatesTab {
             })
             .collect();
 
-        // Build TrackInputs (always by_duration).
         let track_inputs: Vec<TrackInput> = self
             .tracks_by_duration
             .iter_mut()
@@ -901,11 +872,9 @@ impl Tab for TemplatesTab {
         if vscrollbar_area.width > 0 && vscrollbar_area.height > 0 {
             let muted_style = Style::default().fg(Color::DarkGray);
             let active_style = Style::default().fg(Color::White);
-
             for y in vscrollbar_area.y..vscrollbar_area.bottom() {
                 buf.set_string(vscrollbar_area.x, y, " ", muted_style);
             }
-
             let thumb_height = if self.content_height <= vscrollbar_area.height {
                 vscrollbar_area.height
             } else {
@@ -922,12 +891,11 @@ impl Tab for TemplatesTab {
                     * (vscrollbar_area.height.saturating_sub(thumb_height) as f64))
                     .round() as u16
             };
-
             for y in 0..thumb_height {
                 buf.set_string(
                     vscrollbar_area.x,
                     vscrollbar_area.y + thumb_start + y,
-                    "┃",
+                    "\u{2503}",
                     active_style,
                 );
             }
