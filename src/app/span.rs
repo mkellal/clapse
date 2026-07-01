@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::traces::event::TraceData;
 use ratatui::style::Color;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum SpanType {
     Unit,
     Source,
