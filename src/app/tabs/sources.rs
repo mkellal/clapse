@@ -645,6 +645,72 @@ impl Tab for SourcesTab {
             self.search_query = Some(query);
         }
     }
+
+    fn select_next_match(&mut self) {
+        self.navigate_match(1);
+    }
+
+    fn select_previous_match(&mut self) {
+        self.navigate_match(-1);
+    }
+
+    fn match_count(&self) -> usize {
+        self.find_matches().len()
+    }
+
+    fn current_match_index(&self) -> Option<usize> {
+        let matches = self.find_matches();
+        self.selected_span
+            .and_then(|sel| matches.iter().position(|&m| m == sel))
+    }
+}
+
+impl SourcesTab {
+    fn find_matches(&self) -> Vec<usize> {
+        let query = match &self.search_query {
+            Some(q) if !q.is_empty() => q.to_lowercase(),
+            _ => return Vec::new(),
+        };
+        self.spans
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                s.identifier.to_lowercase().contains(&query)
+                    || s.label.to_lowercase().contains(&query)
+                    || s.sublabel
+                        .as_ref()
+                        .map(|sl| sl.to_lowercase().contains(&query))
+                        .unwrap_or(false)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    fn navigate_match(&mut self, direction: isize) {
+        let matches = self.find_matches();
+
+        if matches.is_empty() {
+            return;
+        }
+
+        let current_pos = self
+            .selected_span
+            .and_then(|sel| matches.iter().position(|&m| m == sel));
+
+        let new_pos = match current_pos {
+            Some(p) => {
+                let n = matches.len() as isize;
+                (p as isize + direction).rem_euclid(n) as usize
+            }
+            None => {
+                if direction > 0 { 0 } else { matches.len() - 1 }
+            }
+        };
+
+        self.selected_span = Some(matches[new_pos]);
+        self.zoom_to_selected(None);
+        self.center_selected_track();
+    }
 }
 
 fn aggregate_sources(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {

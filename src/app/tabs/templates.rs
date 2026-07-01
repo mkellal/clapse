@@ -31,6 +31,7 @@ pub struct TemplatesTab {
     pub viewport_width: u16,
     pub content_height: u16,
     pub counts: Vec<usize>,
+    pub search_query: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +241,17 @@ fn build_template_tree(
 // Aggregation
 // ---------------------------------------------------------------------------
 
+/// Shift all depths in the subtree rooted at `root` down by 1.
+fn decrement_depths(spans: &mut [Span], root: usize) {
+    let mut stack = vec![root];
+    while let Some(i) = stack.pop() {
+        spans[i].depth = spans[i].depth.saturating_sub(1);
+        for &c in &spans[i].children_indices {
+            stack.push(c);
+        }
+    }
+}
+
 fn is_instantiation(span: &Span) -> bool {
     span.sublabel.as_deref() == Some("Instantiation")
 }
@@ -361,6 +373,26 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
                 );
                 new_spans[top_idx].children_indices.push(root_idx);
             }
+
+            // If the bare-name parent has exactly ONE child and that child
+            // is a wildcard (has its own children), flatten: promote the
+            // wildcard's children to the bare-name parent, skip the wildcard.
+            if new_spans[top_idx].children_indices.len() == 1 {
+                let child_idx = new_spans[top_idx].children_indices[0];
+                let grandchildren: Vec<usize> = new_spans[child_idx].children_indices.clone();
+                if !grandchildren.is_empty() {
+                    // Reparent grandchildren to top_idx, adjust their depths.
+                    for &gc in &grandchildren {
+                        new_spans[gc].parent_index = Some(top_idx);
+                        // Shift all depths in the gc subtree down by 1.
+                        decrement_depths(&mut new_spans, gc);
+                    }
+                    new_spans[top_idx].children_indices = grandchildren;
+                    // The orphaned wildcard span remains in new_spans but
+                    // is no longer referenced.  schedule_spans ignores it
+                    // because it has parent_index set and is not a root.
+                }
+            }
         }
     }
 
@@ -432,6 +464,7 @@ impl TemplatesTab {
             viewport_width: 0,
             content_height: 0,
             counts,
+            search_query: None,
         }
     }
 
@@ -865,7 +898,7 @@ impl Tab for TemplatesTab {
             scroll_offset: self.vertical_scroll,
             cell_map: &mut self.cell_span_map,
             selected_span,
-            search_query: None,
+            search_query: self.search_query.as_deref(),
         }
         .render(graph_area, buf);
 
@@ -945,5 +978,77 @@ impl Tab for TemplatesTab {
         ]
     }
 
-    fn set_search_query(&mut self, _query: String) {}
+    fn set_search_query(&mut self, query: String) {
+        if query.is_empty() {
+            self.search_query = None;
+        } else {
+            self.search_query = Some(query);
+        }
+    }
+
+    fn select_next_match(&mut self) {
+        self.navigate_match(1);
+    }
+
+    fn select_previous_match(&mut self) {
+        self.navigate_match(-1);
+    }
+
+    fn match_count(&self) -> usize {
+        self.find_matches().len()
+    }
+
+    fn current_match_index(&self) -> Option<usize> {
+        let matches = self.find_matches();
+        self.selected_span
+            .and_then(|sel| matches.iter().position(|&m| m == sel))
+    }
+}
+
+impl TemplatesTab {
+    fn find_matches(&self) -> Vec<usize> {
+        let query = match &self.search_query {
+            Some(q) if !q.is_empty() => q.to_lowercase(),
+            _ => return Vec::new(),
+        };
+        self.spans
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                s.identifier.to_lowercase().contains(&query)
+                    || s.label.to_lowercase().contains(&query)
+                    || s.sublabel
+                        .as_ref()
+                        .map(|sl| sl.to_lowercase().contains(&query))
+                        .unwrap_or(false)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    fn navigate_match(&mut self, direction: isize) {
+        let matches = self.find_matches();
+
+        if matches.is_empty() {
+            return;
+        }
+
+        let current_pos = self
+            .selected_span
+            .and_then(|sel| matches.iter().position(|&m| m == sel));
+
+        let new_pos = match current_pos {
+            Some(p) => {
+                let n = matches.len() as isize;
+                (p as isize + direction).rem_euclid(n) as usize
+            }
+            None => {
+                if direction > 0 { 0 } else { matches.len() - 1 }
+            }
+        };
+
+        self.selected_span = Some(matches[new_pos]);
+        self.zoom_to_selected(None);
+        self.center_selected_track();
+    }
 }

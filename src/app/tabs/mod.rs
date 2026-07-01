@@ -14,4 +14,14 @@ pub trait Tab {
     fn get_help(&self) -> Vec<(&str, &str)>;
 
     fn set_search_query(&mut self, query: String);
+
+    fn select_next_match(&mut self);
+    fn select_previous_match(&mut self);
+
+    fn match_count(&self) -> usize {
+        0
+    }
+    fn current_match_index(&self) -> Option<usize> {
+        None
+    }
 }

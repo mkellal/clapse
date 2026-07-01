@@ -20,7 +20,7 @@ impl Widget for HelpPopup<'_> {
             ("q", "Quit"),
             ("s", "Search"),
             ("Alt + t", "Next tab"),
-            ("h", "Close help"),
+            ("Esc", "Close help"),
         ];
         all_combinations.extend(self.combinations.iter().copied());
 

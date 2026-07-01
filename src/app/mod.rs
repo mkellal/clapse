@@ -11,18 +11,19 @@ use ratatui::widgets::{Tabs, Widget};
 use std::rc::Rc;
 
 pub mod help;
+pub mod search;
 pub mod span;
 pub mod tabs;
 pub mod view;
 
 use crate::app::help::HelpPopup;
+use crate::app::search::SearchBox;
 use crate::app::span::Span;
 use crate::app::tabs::flamegraph::FlameGraphTab;
 use crate::app::tabs::sources::SourcesTab;
 use crate::app::tabs::templates::TemplatesTab;
 use crate::app::view::load_spans;
 use crate::cli;
-use ratatui::widgets::{Block, Borders};
 
 enum ZoomDirection {
     In,
@@ -53,6 +54,7 @@ pub struct App {
     show_help: bool,
     search_query: String,
     show_search: bool,
+    search_locked: bool,
 }
 
 impl Widget for &mut App {
@@ -108,22 +110,21 @@ impl Widget for &mut App {
 
         let show_help = self.show_help;
         let show_search = self.show_search;
+        let search_locked = self.search_locked;
         let query = self.search_query.clone();
 
         let current_tab = self.get_current_tab();
         current_tab.render(main, buf);
 
         if show_search {
-            let search_area = main_layout[1];
-            let search_block = Block::default()
-                .title(" Search (ID or Description) ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::LightGreen));
-            let inner_search = search_block.inner(search_area);
-            search_block.render(search_area, buf);
-            
-            let search_text = format!("{}█", query);
-            buf.set_string(inner_search.x, inner_search.y, &search_text, Style::default().fg(Color::LightGreen));
+            SearchBox {
+                query: &query,
+                match_count: current_tab.match_count(),
+                current_match: current_tab.current_match_index(),
+                has_query: !query.is_empty(),
+                locked: search_locked,
+            }
+            .render(main_layout[1], buf);
         }
 
         if show_help {
@@ -154,6 +155,7 @@ impl Default for App {
             show_help: false,
             search_query: String::new(),
             show_search: false,
+            search_locked: false,
         }
     }
 }
@@ -191,26 +193,55 @@ impl App {
         let alt = key.modifiers.contains(crossterm::event::KeyModifiers::ALT);
 
         if self.show_search {
-            match key.code {
-                KeyCode::Esc | KeyCode::Enter => {
-                    self.show_search = false;
-                    self.search_query.clear();
-                    self.get_current_tab().set_search_query(String::new());
-                    return false;
+            if self.search_locked {
+                // Navigation mode — n/p navigate, Esc unlocks or closes.
+                match key.code {
+                    KeyCode::Esc => {
+                        self.search_locked = false;
+                        return false;
+                    }
+                    KeyCode::Char('n') => {
+                        self.get_current_tab().select_next_match();
+                        return false;
+                    }
+                    KeyCode::Char('p') => {
+                        self.get_current_tab().select_previous_match();
+                        return false;
+                    }
+                    _ => {
+                        // Arrows, ctrl+combos still fall through.
+                    }
                 }
-                KeyCode::Char(c) => {
-                    self.search_query.push(c);
-                    let query = self.search_query.clone();
-                    self.get_current_tab().set_search_query(query);
-                    return false;
+            } else {
+                // Edit mode — type query, Enter locks.
+                match key.code {
+                    KeyCode::Esc => {
+                        self.show_search = false;
+                        self.search_locked = false;
+                        self.search_query.clear();
+                        self.get_current_tab().set_search_query(String::new());
+                        return false;
+                    }
+                    KeyCode::Enter => {
+                        self.search_locked = true;
+                        return false;
+                    }
+                    KeyCode::Char(c) => {
+                        self.search_query.push(c);
+                        let query = self.search_query.clone();
+                        self.get_current_tab().set_search_query(query);
+                        return false;
+                    }
+                    KeyCode::Backspace => {
+                        self.search_query.pop();
+                        let query = self.search_query.clone();
+                        self.get_current_tab().set_search_query(query);
+                        return false;
+                    }
+                    _ => {
+                        // Arrows, ctrl+combos fall through.
+                    }
                 }
-                KeyCode::Backspace => {
-                    self.search_query.pop();
-                    let query = self.search_query.clone();
-                    self.get_current_tab().set_search_query(query);
-                    return false;
-                }
-                _ => return false,
             }
         }
 
@@ -223,6 +254,7 @@ impl App {
             }
             KeyCode::Char('s') | KeyCode::Char('S') => {
                 self.show_search = true;
+                self.search_locked = false;
                 return false;
             }
             KeyCode::Char('t') | KeyCode::Char('T') if alt => {
