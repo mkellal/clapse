@@ -17,7 +17,7 @@ pub mod tabs;
 pub mod view;
 
 use crate::app::help::HelpPopup;
-use crate::app::search::SearchBox;
+use crate::app::search::SearchState;
 use crate::app::span::Span;
 use crate::app::tabs::flamegraph::FlameGraphTab;
 use crate::app::tabs::sources::SourcesTab;
@@ -52,9 +52,7 @@ pub struct App {
     tabs: Vec<Box<dyn tabs::Tab>>,
     tabs_area: Rect,
     show_help: bool,
-    search_query: String,
-    show_search: bool,
-    search_locked: bool,
+    search: SearchState,
 }
 
 impl Widget for &mut App {
@@ -63,7 +61,7 @@ impl Widget for &mut App {
             return;
         }
 
-        let main_layout = if self.show_search {
+        let main_layout = if self.search.visible {
             Layout::vertical([
                 Constraint::Fill(1),
                 Constraint::Length(3),
@@ -109,26 +107,17 @@ impl Widget for &mut App {
         self.tabs_area = tabs_area;
 
         let show_help = self.show_help;
-        let show_search = self.show_search;
-        let search_locked = self.search_locked;
-        let query = self.search_query.clone();
 
-        let current_tab = self.get_current_tab();
-        current_tab.render(main, buf);
+        // Render tab content — use disjoint borrow for search afterward.
+        self.tabs[self.current_tab_index].render(main, buf);
 
-        if show_search {
-            SearchBox {
-                query: &query,
-                match_count: current_tab.match_count(),
-                current_match: current_tab.current_match_index(),
-                has_query: !query.is_empty(),
-                locked: search_locked,
-            }
-            .render(main_layout[1], buf);
+        if self.search.visible {
+            let tab: &dyn tabs::Tab = &*self.tabs[self.current_tab_index];
+            self.search.render(main_layout[1], buf, tab);
         }
 
         if show_help {
-            let help_popup = HelpPopup::new(current_tab.get_help());
+            let help_popup = HelpPopup::new(self.tabs[self.current_tab_index].get_help());
             help_popup.render(area, buf);
         }
     }
@@ -153,9 +142,7 @@ impl Default for App {
             tabs,
             tabs_area: Rect::default(),
             show_help: false,
-            search_query: String::new(),
-            show_search: false,
-            search_locked: false,
+            search: SearchState::default(),
         }
     }
 }
@@ -192,56 +179,10 @@ impl App {
             .contains(crossterm::event::KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(crossterm::event::KeyModifiers::ALT);
 
-        if self.show_search {
-            if self.search_locked {
-                // Navigation mode — n/p navigate, Esc unlocks or closes.
-                match key.code {
-                    KeyCode::Esc => {
-                        self.search_locked = false;
-                        return false;
-                    }
-                    KeyCode::Char('n') => {
-                        self.get_current_tab().select_next_match();
-                        return false;
-                    }
-                    KeyCode::Char('p') => {
-                        self.get_current_tab().select_previous_match();
-                        return false;
-                    }
-                    _ => {
-                        // Arrows, ctrl+combos still fall through.
-                    }
-                }
-            } else {
-                // Edit mode — type query, Enter locks.
-                match key.code {
-                    KeyCode::Esc => {
-                        self.show_search = false;
-                        self.search_locked = false;
-                        self.search_query.clear();
-                        self.get_current_tab().set_search_query(String::new());
-                        return false;
-                    }
-                    KeyCode::Enter => {
-                        self.search_locked = true;
-                        return false;
-                    }
-                    KeyCode::Char(c) => {
-                        self.search_query.push(c);
-                        let query = self.search_query.clone();
-                        self.get_current_tab().set_search_query(query);
-                        return false;
-                    }
-                    KeyCode::Backspace => {
-                        self.search_query.pop();
-                        let query = self.search_query.clone();
-                        self.get_current_tab().set_search_query(query);
-                        return false;
-                    }
-                    _ => {
-                        // Arrows, ctrl+combos fall through.
-                    }
-                }
+        // Delegate to search first — use disjoint field borrows.
+        {
+            if self.search.handle_key(key, &mut *self.tabs[self.current_tab_index]) {
+                return false;
             }
         }
 
@@ -253,8 +194,7 @@ impl App {
                 return false;
             }
             KeyCode::Char('s') | KeyCode::Char('S') => {
-                self.show_search = true;
-                self.search_locked = false;
+                self.search.open(&mut *self.tabs[self.current_tab_index]);
                 return false;
             }
             KeyCode::Char('t') | KeyCode::Char('T') if alt => {

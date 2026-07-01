@@ -1,18 +1,108 @@
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Widget};
 
-pub struct SearchBox<'a> {
-    pub query: &'a str,
-    pub match_count: usize,
-    pub current_match: Option<usize>,
-    pub has_query: bool,
+use crate::app::tabs::Tab;
+
+pub struct SearchState {
+    pub query: String,
+    pub visible: bool,
     pub locked: bool,
 }
 
-/// Build a styled `<key> desc` span pair.
+impl Default for SearchState {
+    fn default() -> Self {
+        Self { query: String::new(), visible: false, locked: false }
+    }
+}
+
+impl SearchState {
+    pub fn open(&mut self, tab: &mut dyn Tab) {
+        self.visible = true;
+        self.locked = false;
+        self.query.clear();
+        tab.set_search_query(String::new());
+    }
+
+    /// Returns `true` if the key was consumed.
+    pub fn handle_key(&mut self, key: KeyEvent, tab: &mut dyn Tab) -> bool {
+        if !self.visible {
+            return false;
+        }
+
+        if self.locked {
+            match key.code {
+                KeyCode::Esc => {
+                    self.locked = false;
+                    return true;
+                }
+                KeyCode::Char('n') => {
+                    tab.select_next_match();
+                    return true;
+                }
+                KeyCode::Char('p') => {
+                    tab.select_previous_match();
+                    return true;
+                }
+                _ => {}
+            }
+        } else {
+            match key.code {
+                KeyCode::Esc => {
+                    self.visible = false;
+                    self.locked = false;
+                    self.query.clear();
+                    tab.set_search_query(String::new());
+                    return true;
+                }
+                KeyCode::Enter => {
+                    self.locked = true;
+                    return true;
+                }
+                KeyCode::Char(c) => {
+                    self.query.push(c);
+                    tab.set_search_query(self.query.clone());
+                    return true;
+                }
+                KeyCode::Backspace => {
+                    self.query.pop();
+                    tab.set_search_query(self.query.clone());
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
+        // Non-search keys fall through to tab handler.
+        false
+    }
+
+    /// Render the search box. `area` should be the bottom 3 rows of the terminal.
+    pub fn render(&self, area: Rect, buf: &mut Buffer, tab: &dyn Tab) {
+        SearchBoxWidget {
+            query: &self.query,
+            match_count: tab.match_count(),
+            current_match: tab.current_match_index(),
+            has_query: !self.query.is_empty(),
+            locked: self.locked,
+        }
+        .render(area, buf);
+    }
+}
+
+// ── Internal widget ──────────────────────────────────────────────────────────
+
+struct SearchBoxWidget<'a> {
+    query: &'a str,
+    match_count: usize,
+    current_match: Option<usize>,
+    has_query: bool,
+    locked: bool,
+}
+
 fn key_hint(key: &str, desc: &str) -> Vec<Span<'static>> {
     vec![
         Span::styled("<", Color::DarkGray),
@@ -22,7 +112,7 @@ fn key_hint(key: &str, desc: &str) -> Vec<Span<'static>> {
     ]
 }
 
-impl<'a> Widget for SearchBox<'a> {
+impl Widget for SearchBoxWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let mut title_spans: Vec<Span> = vec![Span::raw(" Search ")];
 
@@ -47,11 +137,7 @@ impl<'a> Widget for SearchBox<'a> {
 
         let title = Line::from(title_spans);
 
-        let text_color = if self.locked {
-            Color::Black
-        } else {
-            Color::LightGreen
-        };
+        let text_color = if self.locked { Color::Black } else { Color::LightGreen };
 
         let block = if self.locked {
             Block::default()
@@ -75,7 +161,9 @@ impl<'a> Widget for SearchBox<'a> {
             inner.x,
             inner.y,
             &text,
-            Style::default().fg(text_color).bg(if self.locked { Color::LightGreen } else { Color::Reset }),
+            Style::default()
+                .fg(text_color)
+                .bg(if self.locked { Color::LightGreen } else { Color::Reset }),
         );
     }
 }
