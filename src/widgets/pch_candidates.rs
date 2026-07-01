@@ -29,49 +29,82 @@ impl PchCandidate {
     }
 }
 
-/// Renders a scrollable list of PCH candidates.
+/// What kind of text the copy button produces.
+#[derive(Clone, Copy, PartialEq)]
+pub enum CopyMode {
+    /// `#include "file.h"` or `#include <file.h>`
+    Includes,
+    /// `extern template Foo<int>;`
+    ExternTemplate,
+}
+
+/// Renders a scrollable list of candidates.
 /// Each candidate occupies 2 rows:
 ///   row 0: file name (left-aligned, truncated to fit)
 ///   row 1: total + count + avg
-pub struct PchCandidatesWidget<'a> {
+pub struct CandidatesWidget<'a> {
+    pub title: &'a str,
     pub candidates: &'a [PchCandidate],
     /// Number of *candidates* scrolled past (not rows).
     pub scroll_offset: u16,
     pub selected_index: Option<usize>,
     /// When true, the copy button shows a green "✓ Copied" state.
     pub copy_confirmed: bool,
+    /// What the copy button writes to clipboard.
+    pub copy_mode: CopyMode,
 }
 
-impl<'a> PchCandidatesWidget<'a> {
+impl<'a> CandidatesWidget<'a> {
     pub const HEADER_HEIGHT: u16 = 2;
     pub const CANDIDATE_ROWS: u16 = 2;
 
+    fn copy_button_label(&self) -> &str {
+        if self.copy_confirmed {
+            " ✓ Copied "
+        } else {
+            match self.copy_mode {
+                CopyMode::Includes => "📋 Copy #includes",
+                CopyMode::ExternTemplate => "📋 Copy externs",
+            }
+        }
+    }
+
     pub fn hit_copy_button(&self, area: Rect, col: u16, row: u16) -> bool {
-        let button_width: u16 = if self.copy_confirmed { 12 } else { 18 };
+        let btn_text = self.copy_button_label();
+        let button_width: u16 = btn_text.len() as u16;
         let btn_x = area.x + area.width.saturating_sub(button_width + 1);
         let btn_y = area.y + 1;
         col >= btn_x && col < area.x + area.width.saturating_sub(1) && row == btn_y
     }
 
-    pub fn build_includes(&self) -> String {
-        self.candidates
-            .iter()
-            .take(10)
-            .map(|c| {
-                let path = &c.identifier;
-                let display = &c.label;
-                if path.starts_with('/') && (path.contains("/usr/") || path.contains("/include/")) {
-                    format!("#include <{}>", display)
-                } else {
-                    format!("#include \"{}\"", display)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+    /// Build text for the clipboard based on copy_mode.
+    pub fn build_copy_text(&self) -> String {
+        match self.copy_mode {
+            CopyMode::Includes => self.candidates
+                .iter()
+                .take(10)
+                .map(|c| {
+                    let path = &c.identifier;
+                    let display = &c.label;
+                    if path.starts_with('/') && (path.contains("/usr/") || path.contains("/include/")) {
+                        format!("#include <{}>", display)
+                    } else {
+                        format!("#include \"{}\"", display)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            CopyMode::ExternTemplate => self.candidates
+                .iter()
+                .take(10)
+                .map(|c| format!("extern template {};", c.label))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
     }
 }
 
-impl Widget for PchCandidatesWidget<'_> {
+impl Widget for CandidatesWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.width < 10 || area.height < 3 {
             return;
@@ -91,14 +124,17 @@ impl Widget for PchCandidatesWidget<'_> {
         buf.set_string(
             inner.x,
             inner.y,
-            "PCH Candidates",
+            self.title,
             Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
         );
 
         let (btn_text, btn_bg) = if self.copy_confirmed {
             (" ✓ Copied ", Color::Green)
         } else {
-            (" 📋  qCopy #includes ", Color::Blue)
+            match self.copy_mode {
+                CopyMode::Includes => ("📋 Copy #includes", Color::Blue),
+                CopyMode::ExternTemplate => ("📋 Copy externs", Color::Blue),
+            }
         };
         let btn_width = btn_text.len() as u16;
         let btn_x = inner.x + inner.width.saturating_sub(btn_width);

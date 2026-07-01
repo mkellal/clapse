@@ -5,6 +5,7 @@ use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::time::Instant;
 
 use crate::app::ZoomDirection;
 use crate::app::span::{Span, SpanType};
@@ -14,6 +15,7 @@ use crate::app::view::{
     get_following_span_index, schedule_spans,
 };
 use crate::widgets::flamegraph::FlamegraphWidget;
+use crate::widgets::pch_candidates::{PchCandidate, CandidatesWidget, CopyMode};
 use crate::widgets::span_details::SpanDetails;
 use crate::widgets::time_range::DurationRange;
 use crate::widgets::track::TrackInput;
@@ -32,6 +34,14 @@ pub struct TemplatesTab {
     pub content_height: u16,
     pub counts: Vec<usize>,
     pub search_query: Option<String>,
+    /// Extern candidates: top 10 slowest concrete template instantiations.
+    pub extern_candidates: Vec<PchCandidate>,
+    /// Maps identifier → list of span indices for cross-referencing.
+    pub extern_span_map: HashMap<String, Vec<usize>>,
+    pub extern_scroll_offset: u16,
+    pub extern_selected_index: Option<usize>,
+    pch_rect: Rect,
+    copy_confirmed_at: Option<Instant>,
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +461,9 @@ impl TemplatesTab {
             }
         }
 
+        // --- Compute extern candidates: leaf template spans (concrete instantiations) ---
+        let (extern_candidates, extern_span_map) = compute_extern_candidates(&spans, &counts);
+
         Self {
             spans,
             tracks_by_duration,
@@ -465,6 +478,12 @@ impl TemplatesTab {
             content_height: 0,
             counts,
             search_query: None,
+            extern_candidates,
+            extern_span_map,
+            extern_scroll_offset: 0,
+            extern_selected_index: None,
+            pch_rect: Rect::default(),
+            copy_confirmed_at: None,
         }
     }
 
@@ -772,6 +791,7 @@ impl Tab for TemplatesTab {
             KeyCode::Esc => self.selected_span = None,
             KeyCode::Tab => self.switch_track(HorizontalDirection::Next),
             KeyCode::BackTab => self.switch_track(HorizontalDirection::Previous),
+            KeyCode::Char('y') if ctrl => self.copy_externs_to_clipboard(),
             _ => {}
         }
         false
@@ -781,15 +801,94 @@ impl Tab for TemplatesTab {
         match mouse.kind {
             MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
                 let coord = (mouse.column, mouse.row);
+
+                // Check extern panel copy button
+                let pch_rect = self.pch_rect;
+                if pch_rect.width > 0 {
+                    let copy_confirmed = self
+                        .copy_confirmed_at
+                        .map_or(false, |t| Instant::now().duration_since(t).as_secs() < 3);
+                    let widget = CandidatesWidget {
+                        title: "Extern Candidates",
+                        candidates: &self.extern_candidates,
+                        scroll_offset: self.extern_scroll_offset,
+                        selected_index: self.extern_selected_index,
+                        copy_confirmed,
+                        copy_mode: CopyMode::ExternTemplate,
+                    };
+                    if widget.hit_copy_button(pch_rect, coord.0, coord.1) {
+                        self.copy_externs_to_clipboard();
+                        return;
+                    }
+                }
+
+                // Check extern candidate list clicks
+                if pch_rect.width > 0 {
+                    let block = ratatui::widgets::Block::default()
+                        .borders(ratatui::widgets::Borders::ALL);
+                    let inner = block.inner(pch_rect);
+                    let list_top = inner.y + CandidatesWidget::HEADER_HEIGHT;
+                    if coord.0 >= inner.x
+                        && coord.0 < inner.x + inner.width
+                        && coord.1 >= list_top
+                        && coord.1 < inner.bottom()
+                    {
+                        let row_in_list = coord.1 - list_top;
+                        let idx = self.extern_scroll_offset as usize
+                            + (row_in_list / CandidatesWidget::CANDIDATE_ROWS) as usize;
+                        if idx < self.extern_candidates.len() {
+                            self.extern_selected_index = Some(idx);
+                            let ident = self.extern_candidates[idx].identifier.clone();
+                            if let Some(indices) = self.extern_span_map.get(&ident) {
+                                if let Some(&si) = indices.first() {
+                                    self.selected_span = Some(si);
+                                    self.zoom_to_selected(None);
+                                    self.center_selected_track();
+                                }
+                            }
+                        }
+                        return;
+                    }
+                }
+
+                // Fallthrough: flamegraph click
                 if let Some(&si) = self.cell_span_map.get(&coord) {
                     self.selected_span = Some(si);
                 }
             }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => {
+                let pch_rect = self.pch_rect;
+                if pch_rect.width > 0 && mouse.column >= pch_rect.x {
+                    let visible_count = pch_rect
+                        .height
+                        .saturating_sub(2)
+                        .saturating_sub(CandidatesWidget::HEADER_HEIGHT)
+                        / CandidatesWidget::CANDIDATE_ROWS;
+                    let max_scroll = self
+                        .extern_candidates
+                        .len()
+                        .saturating_sub(visible_count as usize) as u16;
+                    self.extern_scroll_offset = self.extern_scroll_offset.saturating_sub(1).min(max_scroll);
+                    return;
+                }
                 let max_scroll = self.content_height.saturating_sub(self.viewport_height);
                 self.vertical_scroll = self.vertical_scroll.saturating_sub(3).min(max_scroll);
             }
             MouseEventKind::ScrollDown | MouseEventKind::ScrollRight => {
+                let pch_rect = self.pch_rect;
+                if pch_rect.width > 0 && mouse.column >= pch_rect.x {
+                    let visible_count = pch_rect
+                        .height
+                        .saturating_sub(2)
+                        .saturating_sub(CandidatesWidget::HEADER_HEIGHT)
+                        / CandidatesWidget::CANDIDATE_ROWS;
+                    let max_scroll = self
+                        .extern_candidates
+                        .len()
+                        .saturating_sub(visible_count as usize) as u16;
+                    self.extern_scroll_offset = self.extern_scroll_offset.saturating_add(1).min(max_scroll);
+                    return;
+                }
                 let max_scroll = self.content_height.saturating_sub(self.viewport_height);
                 self.vertical_scroll = self.vertical_scroll.saturating_add(3).min(max_scroll);
             }
@@ -800,6 +899,16 @@ impl Tab for TemplatesTab {
     fn render(&mut self, area: Rect, buf: &mut Buffer) {
         let total_duration = self.total_duration();
         let visible_duration = total_duration / self.zoom;
+
+        // --- Layout: left (templates), right (extern candidates full-height) ---
+        let pch_width: u16 = if area.width >= 80 { 40 } else { 0 };
+        let left_width = area.width.saturating_sub(pch_width);
+        let left_area = Rect::new(area.x, area.y, left_width, area.height);
+
+        let left_block = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray));
+        let left_inner = left_block.inner(left_area);
 
         let scrollbar_height = 2;
         let details_height: u16 = if let Some(si) = self.selected_span {
@@ -823,33 +932,42 @@ impl Tab for TemplatesTab {
                         parent_duration,
                         total_duration,
                     }
-                    .required_height(area.width)
+                    .required_height(left_inner.width)
                 })
                 .unwrap_or(0)
         } else {
             0
         };
-        let graph_height = area
-            .height
-            .saturating_sub(scrollbar_height + details_height);
-        let vertical_scrollbar_width: u16 = if area.width > 1 { 1 } else { 0 };
-        let graph_width = area.width.saturating_sub(vertical_scrollbar_width);
+        let graph_height = left_inner.height.saturating_sub(scrollbar_height + details_height);
+        let vscrollbar_width: u16 = if left_inner.width > 1 { 1 } else { 0 };
+        let graph_width = left_inner.width.saturating_sub(vscrollbar_width);
 
-        let scrollbar_area = Rect::new(area.x, area.y, area.width, scrollbar_height);
-        let graph_area = Rect::new(area.x, area.y + scrollbar_height, graph_width, graph_height);
+        let scrollbar_area = Rect::new(left_inner.x, left_inner.y, left_inner.width, scrollbar_height);
+        let graph_area = Rect::new(left_inner.x, left_inner.y + scrollbar_height, graph_width, graph_height);
         let vscrollbar_area = Rect::new(
-            area.x + graph_width,
-            area.y + scrollbar_height,
-            vertical_scrollbar_width,
+            left_inner.x + graph_width,
+            left_inner.y + scrollbar_height,
+            vscrollbar_width,
             graph_height,
         );
         let details_area = Rect::new(
-            area.x,
-            area.y + scrollbar_height + graph_height,
-            area.width,
+            left_inner.x,
+            left_inner.y + scrollbar_height + graph_height,
+            left_inner.width,
             details_height,
         );
 
+        let pch_area = if pch_width > 0 {
+            Rect::new(area.x + left_width, area.y, pch_width, area.height)
+        } else {
+            Rect::default()
+        };
+        self.pch_rect = pch_area;
+
+        // Render left border
+        left_block.render(left_area, buf);
+
+        // Timeline
         DurationRange {
             total_duration,
             start: self.start_time,
@@ -857,6 +975,7 @@ impl Tab for TemplatesTab {
         }
         .render(scrollbar_area, buf);
 
+        // Flamegraph
         self.cell_span_map.clear();
         self.viewport_height = graph_height;
         self.viewport_width = graph_area.width;
@@ -902,6 +1021,7 @@ impl Tab for TemplatesTab {
         }
         .render(graph_area, buf);
 
+        // VScrollbar
         if vscrollbar_area.width > 0 && vscrollbar_area.height > 0 {
             let muted_style = Style::default().fg(Color::DarkGray);
             let active_style = Style::default().fg(Color::White);
@@ -916,7 +1036,6 @@ impl Tab for TemplatesTab {
                     .round() as u16
             }
             .clamp(1, vscrollbar_area.height);
-
             let thumb_start = if max_scroll == 0 {
                 0
             } else {
@@ -934,17 +1053,30 @@ impl Tab for TemplatesTab {
             }
         }
 
+        // Extern candidates panel
+        if pch_width > 0 && pch_area.height > 0 {
+            let now = Instant::now();
+            let copy_confirmed = self
+                .copy_confirmed_at
+                .map_or(false, |t| now.duration_since(t).as_secs() < 3);
+
+            CandidatesWidget {
+                title: "Extern Candidates",
+                candidates: &self.extern_candidates,
+                scroll_offset: self.extern_scroll_offset,
+                selected_index: self.extern_selected_index,
+                copy_confirmed,
+                copy_mode: CopyMode::ExternTemplate,
+            }
+            .render(pch_area, buf);
+        }
+
+        // Details
         if let Some(si) = self.selected_span {
             if let Some(span) = self.spans.get(si) {
-                let parent_duration = span
-                    .parent_index
-                    .and_then(|pi| self.spans.get(pi))
-                    .map(|p| p.duration);
+                let parent_duration = span.parent_index.and_then(|pi| self.spans.get(pi)).map(|p| p.duration);
                 let view = AggregateSpanView {
-                    view: SpanView {
-                        span_index: si,
-                        ..Default::default()
-                    },
+                    view: SpanView { span_index: si, ..Default::default() },
                     count: self.counts[si],
                 };
                 SpanDetails {
@@ -975,6 +1107,7 @@ impl Tab for TemplatesTab {
             ("Esc", "Clear selection"),
             ("Tab", "Next track"),
             ("Shift + Tab", "Previous track"),
+            ("Ctrl + Y", "Copy extern #includes"),
         ]
     }
 
@@ -1006,6 +1139,20 @@ impl Tab for TemplatesTab {
 }
 
 impl TemplatesTab {
+    fn copy_externs_to_clipboard(&mut self) {
+        let text = CandidatesWidget {
+            title: "",
+            candidates: &self.extern_candidates,
+            scroll_offset: 0,
+            selected_index: None,
+            copy_confirmed: false,
+            copy_mode: CopyMode::ExternTemplate,
+        }
+        .build_copy_text();
+        let _ = write_to_clipboard(&text);
+        self.copy_confirmed_at = Some(Instant::now());
+    }
+
     fn find_matches(&self) -> Vec<usize> {
         let query = match &self.search_query {
             Some(q) if !q.is_empty() => q.to_lowercase(),
@@ -1051,4 +1198,88 @@ impl TemplatesTab {
         self.zoom_to_selected(None);
         self.center_selected_track();
     }
+}
+
+/// Compute extern candidates: top 10 leaf template spans (concrete instantiations)
+/// appearing in 2+ TUs, sorted by duration descending.
+fn compute_extern_candidates(
+    spans: &[Span],
+    counts: &[usize],
+) -> (Vec<PchCandidate>, HashMap<String, Vec<usize>>) {
+    let mut map: HashMap<String, (f64, usize)> = HashMap::new();
+    let mut span_map: HashMap<String, Vec<usize>> = HashMap::new();
+
+    // Only consider leaf spans (concrete instantiations, no children).
+    // Also skip lambda types — each TU gets its own lambda type, so extern is useless.
+    for (i, span) in spans.iter().enumerate() {
+        if !span.children_indices.is_empty() {
+            continue;
+        }
+        if span.identifier.to_lowercase().contains("(lambda") {
+            continue;
+        }
+        let entry = map.entry(span.identifier.clone()).or_insert((0.0, 0));
+        entry.0 += span.duration;
+        entry.1 += counts[i];
+        span_map.entry(span.identifier.clone()).or_default().push(i);
+    }
+
+    let mut candidates: Vec<PchCandidate> = map
+        .into_iter()
+        .filter(|(_, (_, total_count))| *total_count > 1)
+        .map(|(ident, (total_dur, total_count))| {
+            let label = spans
+                .iter()
+                .find(|s| s.identifier == ident)
+                .map(|s| s.label.clone())
+                .unwrap_or_else(|| ident.clone());
+            PchCandidate::new(ident, label, total_dur, total_count)
+        })
+        .collect();
+
+    candidates.sort_by(|a, b| {
+        b.total_duration
+            .partial_cmp(&a.total_duration)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    candidates.truncate(10);
+
+    let top_idents: HashSet<String> = candidates.iter().map(|c| c.identifier.clone()).collect();
+    span_map.retain(|k, _| top_idents.contains(k));
+
+    (candidates, span_map)
+}
+
+fn write_to_clipboard(text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let encoded = base64_encode(text);
+    let mut stdout = std::io::stdout().lock();
+    write!(stdout, "\x1b]52;c;{}\x07", encoded)?;
+    stdout.flush()?;
+    Ok(())
+}
+
+fn base64_encode(input: &str) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = input.as_bytes();
+    let mut result = String::new();
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        result.push(CHARS[((n >> 18) & 0x3F) as usize] as char);
+        result.push(CHARS[((n >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(CHARS[((n >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(CHARS[(n & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
 }

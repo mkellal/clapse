@@ -15,7 +15,7 @@ use crate::app::view::{
     build_track_views, get_following_span_index, schedule_spans,
 };
 use crate::widgets::flamegraph::FlamegraphWidget;
-use crate::widgets::pch_candidates::{PchCandidate, PchCandidatesWidget};
+use crate::widgets::pch_candidates::{PchCandidate, CandidatesWidget, CopyMode};
 use crate::widgets::span_details::SpanDetails;
 use crate::widgets::time_range::DurationRange;
 use crate::widgets::track::TrackInput;
@@ -447,11 +447,13 @@ impl Tab for SourcesTab {
                     let copy_confirmed = self
                         .copy_confirmed_at
                         .map_or(false, |t| Instant::now().duration_since(t).as_secs() < 3);
-                    let widget = PchCandidatesWidget {
+                    let widget = CandidatesWidget {
+                        title: "PCH Candidates",
                         candidates: &self.pch_candidates,
                         scroll_offset: self.pch_scroll_offset,
                         selected_index: self.pch_selected_index,
                         copy_confirmed,
+                        copy_mode: CopyMode::Includes,
                     };
                     if widget.hit_copy_button(pch_rect, coord.0, coord.1) {
                         self.copy_includes_to_clipboard();
@@ -464,7 +466,7 @@ impl Tab for SourcesTab {
                     let block = ratatui::widgets::Block::default()
                         .borders(ratatui::widgets::Borders::ALL);
                     let inner = block.inner(pch_rect);
-                    let list_top = inner.y + PchCandidatesWidget::HEADER_HEIGHT;
+                    let list_top = inner.y + CandidatesWidget::HEADER_HEIGHT;
                     if coord.0 >= inner.x
                         && coord.0 < inner.x + inner.width
                         && coord.1 >= list_top
@@ -472,7 +474,7 @@ impl Tab for SourcesTab {
                     {
                         let row_in_list = coord.1 - list_top;
                         let idx = self.pch_scroll_offset as usize
-                            + (row_in_list / PchCandidatesWidget::CANDIDATE_ROWS) as usize;
+                            + (row_in_list / CandidatesWidget::CANDIDATE_ROWS) as usize;
                         if idx < self.pch_candidates.len() {
                             self.pch_selected_index = Some(idx);
                             let ident = self.pch_candidates[idx].identifier.clone();
@@ -498,9 +500,9 @@ impl Tab for SourcesTab {
                 if pch_rect.width > 0 && mouse.column >= pch_rect.x {
                     let visible_count = pch_rect
                         .height
-                        .saturating_sub(2) // borders
-                        .saturating_sub(PchCandidatesWidget::HEADER_HEIGHT)
-                        / PchCandidatesWidget::CANDIDATE_ROWS;
+                        .saturating_sub(2)
+                        .saturating_sub(CandidatesWidget::HEADER_HEIGHT)
+                        / CandidatesWidget::CANDIDATE_ROWS;
                     let max_scroll = self
                         .pch_candidates
                         .len()
@@ -516,9 +518,9 @@ impl Tab for SourcesTab {
                 if pch_rect.width > 0 && mouse.column >= pch_rect.x {
                     let visible_count = pch_rect
                         .height
-                        .saturating_sub(2) // borders
-                        .saturating_sub(PchCandidatesWidget::HEADER_HEIGHT)
-                        / PchCandidatesWidget::CANDIDATE_ROWS;
+                        .saturating_sub(2)
+                        .saturating_sub(CandidatesWidget::HEADER_HEIGHT)
+                        / CandidatesWidget::CANDIDATE_ROWS;
                     let max_scroll = self
                         .pch_candidates
                         .len()
@@ -758,11 +760,13 @@ impl Tab for SourcesTab {
                 .copy_confirmed_at
                 .map_or(false, |t| now.duration_since(t).as_secs() < 3);
 
-            PchCandidatesWidget {
+            CandidatesWidget {
+                title: "PCH Candidates",
                 candidates: &self.pch_candidates,
                 scroll_offset: self.pch_scroll_offset,
                 selected_index: self.pch_selected_index,
                 copy_confirmed,
+                copy_mode: CopyMode::Includes,
             }
             .render(pch_area, buf);
         }
@@ -844,13 +848,15 @@ impl Tab for SourcesTab {
 
 impl SourcesTab {
     fn copy_includes_to_clipboard(&mut self) {
-        let includes = PchCandidatesWidget {
+        let includes = CandidatesWidget {
+            title: "",
             candidates: &self.pch_candidates,
             scroll_offset: 0,
             selected_index: None,
             copy_confirmed: false,
+            copy_mode: CopyMode::Includes,
         }
-        .build_includes();
+        .build_copy_text();
         let _ = write_to_clipboard(&includes);
         self.copy_confirmed_at = Some(Instant::now());
     }
