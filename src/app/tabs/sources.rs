@@ -5,6 +5,7 @@ use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Instant;
 
 use crate::app::ZoomDirection;
 use crate::app::span::{Span, SpanType};
@@ -14,6 +15,7 @@ use crate::app::view::{
     build_track_views, get_following_span_index, schedule_spans,
 };
 use crate::widgets::flamegraph::FlamegraphWidget;
+use crate::widgets::pch_candidates::{PchCandidate, PchCandidatesWidget};
 use crate::widgets::span_details::SpanDetails;
 use crate::widgets::time_range::DurationRange;
 use crate::widgets::track::TrackInput;
@@ -36,6 +38,16 @@ pub struct SourcesTab {
     pub content_height: u16,
     pub counts: Vec<usize>,
     pub search_query: Option<String>,
+    /// PCH candidates (sorted by total_duration descending).
+    pub pch_candidates: Vec<PchCandidate>,
+    /// Maps file identifier → list of span indices for cross-referencing.
+    pub pch_span_map: HashMap<String, Vec<usize>>,
+    pub pch_scroll_offset: u16,
+    pub pch_selected_index: Option<usize>,
+    /// Stored during render for mouse hit-testing.
+    pch_rect: Rect,
+    /// When Some, the copy button shows "✓ Copied!" until this instant.
+    copy_confirmed_at: Option<Instant>,
 }
 
 impl SourcesTab {
@@ -63,6 +75,9 @@ impl SourcesTab {
             }
         }
 
+        // --- Compute PCH candidates: group by file identifier across all TUs ---
+        let (pch_candidates, pch_span_map) = compute_pch_candidates(&spans, &counts);
+
         Self {
             spans,
             tracks_start_time,
@@ -79,6 +94,12 @@ impl SourcesTab {
             content_height: 0,
             counts,
             search_query: None,
+            pch_candidates,
+            pch_span_map,
+            pch_scroll_offset: 0,
+            pch_selected_index: None,
+            pch_rect: Rect::default(),
+            copy_confirmed_at: None,
         }
     }
 
@@ -409,6 +430,7 @@ impl Tab for SourcesTab {
             KeyCode::Esc => self.selected_span = None,
             KeyCode::Tab => self.switch_track(HorizontalDirection::Next),
             KeyCode::BackTab => self.switch_track(HorizontalDirection::Previous),
+            KeyCode::Char('y') if ctrl => self.copy_includes_to_clipboard(),
             _ => {}
         }
         false
@@ -418,15 +440,92 @@ impl Tab for SourcesTab {
         match mouse.kind {
             MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
                 let coord = (mouse.column, mouse.row);
+
+                // Check PCH panel copy button first
+                let pch_rect = self.pch_rect;
+                if pch_rect.width > 0 {
+                    let copy_confirmed = self
+                        .copy_confirmed_at
+                        .map_or(false, |t| Instant::now().duration_since(t).as_secs() < 3);
+                    let widget = PchCandidatesWidget {
+                        candidates: &self.pch_candidates,
+                        scroll_offset: self.pch_scroll_offset,
+                        selected_index: self.pch_selected_index,
+                        copy_confirmed,
+                    };
+                    if widget.hit_copy_button(pch_rect, coord.0, coord.1) {
+                        self.copy_includes_to_clipboard();
+                        return;
+                    }
+                }
+
+                // Then check PCH candidate list clicks
+                if pch_rect.width > 0 {
+                    let block = ratatui::widgets::Block::default()
+                        .borders(ratatui::widgets::Borders::ALL);
+                    let inner = block.inner(pch_rect);
+                    let list_top = inner.y + PchCandidatesWidget::HEADER_HEIGHT;
+                    if coord.0 >= inner.x
+                        && coord.0 < inner.x + inner.width
+                        && coord.1 >= list_top
+                        && coord.1 < inner.bottom()
+                    {
+                        let row_in_list = coord.1 - list_top;
+                        let idx = self.pch_scroll_offset as usize
+                            + (row_in_list / PchCandidatesWidget::CANDIDATE_ROWS) as usize;
+                        if idx < self.pch_candidates.len() {
+                            self.pch_selected_index = Some(idx);
+                            let ident = self.pch_candidates[idx].identifier.clone();
+                            if let Some(indices) = self.pch_span_map.get(&ident) {
+                                if let Some(&si) = indices.first() {
+                                    self.selected_span = Some(si);
+                                    self.zoom_to_selected(None);
+                                    self.center_selected_track();
+                                }
+                            }
+                        }
+                        return;
+                    }
+                }
+
+                // Fallthrough: flamegraph click
                 if let Some(&si) = self.cell_span_map.get(&coord) {
                     self.selected_span = Some(si);
                 }
             }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => {
+                let pch_rect = self.pch_rect;
+                if pch_rect.width > 0 && mouse.column >= pch_rect.x {
+                    let visible_count = pch_rect
+                        .height
+                        .saturating_sub(2) // borders
+                        .saturating_sub(PchCandidatesWidget::HEADER_HEIGHT)
+                        / PchCandidatesWidget::CANDIDATE_ROWS;
+                    let max_scroll = self
+                        .pch_candidates
+                        .len()
+                        .saturating_sub(visible_count as usize) as u16;
+                    self.pch_scroll_offset = self.pch_scroll_offset.saturating_sub(1).min(max_scroll);
+                    return;
+                }
                 let max_scroll = self.content_height.saturating_sub(self.viewport_height);
                 self.vertical_scroll = self.vertical_scroll.saturating_sub(3).min(max_scroll);
             }
             MouseEventKind::ScrollDown | MouseEventKind::ScrollRight => {
+                let pch_rect = self.pch_rect;
+                if pch_rect.width > 0 && mouse.column >= pch_rect.x {
+                    let visible_count = pch_rect
+                        .height
+                        .saturating_sub(2) // borders
+                        .saturating_sub(PchCandidatesWidget::HEADER_HEIGHT)
+                        / PchCandidatesWidget::CANDIDATE_ROWS;
+                    let max_scroll = self
+                        .pch_candidates
+                        .len()
+                        .saturating_sub(visible_count as usize) as u16;
+                    self.pch_scroll_offset = self.pch_scroll_offset.saturating_add(1).min(max_scroll);
+                    return;
+                }
                 let max_scroll = self.content_height.saturating_sub(self.viewport_height);
                 self.vertical_scroll = self.vertical_scroll.saturating_add(3).min(max_scroll);
             }
@@ -437,6 +536,17 @@ impl Tab for SourcesTab {
     fn render(&mut self, area: Rect, buf: &mut Buffer) {
         let total_duration = self.total_duration();
         let visible_duration = total_duration / self.zoom;
+
+        // --- Layout: left (bordered, contains flamegraph+timeline+details), right (PCH full-height) ---
+        let pch_width: u16 = if area.width >= 80 { 40 } else { 0 };
+        let left_width = area.width.saturating_sub(pch_width);
+        let left_area = Rect::new(area.x, area.y, left_width, area.height);
+
+        // Border around left section
+        let left_block = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray));
+        let left_inner = left_block.inner(left_area);
 
         let scrollbar_height = 2;
         let details_height: u16 = if let Some(si) = self.selected_span {
@@ -463,33 +573,66 @@ impl Tab for SourcesTab {
                         parent_duration,
                         total_duration,
                     }
-                    .required_height(area.width)
+                    .required_height(left_inner.width)
                 })
                 .unwrap_or(0)
         } else {
             0
         };
-        let graph_height = area
+        let graph_height = left_inner
             .height
             .saturating_sub(scrollbar_height + details_height);
-        let vertical_scrollbar_width: u16 = if area.width > 1 { 1 } else { 0 };
-        let graph_width = area.width.saturating_sub(vertical_scrollbar_width);
+        let vscrollbar_width: u16 = if left_inner.width > 1 { 1 } else { 0 };
+        let graph_width = left_inner.width.saturating_sub(vscrollbar_width);
 
-        let scrollbar_area = Rect::new(area.x, area.y, area.width, scrollbar_height);
-        let graph_area = Rect::new(area.x, area.y + scrollbar_height, graph_width, graph_height);
-        let vscrollbar_area = Rect::new(
-            area.x + graph_width,
-            area.y + scrollbar_height,
-            vertical_scrollbar_width,
+        // --- Left section: timeline (top) ---
+        let scrollbar_area = Rect::new(
+            left_inner.x,
+            left_inner.y,
+            left_inner.width,
+            scrollbar_height,
+        );
+
+        // --- Left section: flamegraph (middle) ---
+        let graph_area = Rect::new(
+            left_inner.x,
+            left_inner.y + scrollbar_height,
+            graph_width,
             graph_height,
         );
+
+        // --- Left section: vscrollbar ---
+        let vscrollbar_area = Rect::new(
+            left_inner.x + graph_width,
+            left_inner.y + scrollbar_height,
+            vscrollbar_width,
+            graph_height,
+        );
+
+        // --- Left section: details (bottom) ---
         let details_area = Rect::new(
-            area.x,
-            area.y + scrollbar_height + graph_height,
-            area.width,
+            left_inner.x,
+            left_inner.y + scrollbar_height + graph_height,
+            left_inner.width,
             details_height,
         );
 
+        // --- Right section: PCH panel (full height) ---
+        let pch_area = if pch_width > 0 {
+            Rect::new(area.x + left_width, area.y, pch_width, area.height)
+        } else {
+            Rect::default()
+        };
+        self.pch_rect = pch_area;
+
+        // ================================================================
+        // Render left section border
+        // ================================================================
+        left_block.render(left_area, buf);
+
+        // ================================================================
+        // Render timeline (left section only)
+        // ================================================================
         let start_time = self.start_time;
         let scrollbar = DurationRange {
             total_duration,
@@ -498,6 +641,9 @@ impl Tab for SourcesTab {
         };
         scrollbar.render(scrollbar_area, buf);
 
+        // ================================================================
+        // Render flamegraph (left section)
+        // ================================================================
         self.cell_span_map.clear();
         self.viewport_height = graph_height;
         self.viewport_width = graph_area.width;
@@ -507,7 +653,6 @@ impl Tab for SourcesTab {
         use crate::widgets::track::track_content_height;
         let label_height: u16 = 1;
 
-        // Compute per-track heights
         let heights: Vec<u16> = match order_by {
             OrderBy::StartTime => self
                 .tracks_start_time
@@ -527,7 +672,6 @@ impl Tab for SourcesTab {
                 .collect(),
         };
 
-        // Build TrackInputs
         let track_inputs: Vec<TrackInput> = match order_by {
             OrderBy::StartTime => self
                 .tracks_start_time
@@ -567,6 +711,9 @@ impl Tab for SourcesTab {
         }
         .render(graph_area, buf);
 
+        // ================================================================
+        // Render vscrollbar (left section)
+        // ================================================================
         if vscrollbar_area.width > 0 && vscrollbar_area.height > 0 {
             let muted_style = Style::default().fg(Color::DarkGray);
             let active_style = Style::default().fg(Color::White);
@@ -593,13 +740,42 @@ impl Tab for SourcesTab {
             };
 
             for y in 0..thumb_height {
-                buf.set_string(vscrollbar_area.x, vscrollbar_area.y + thumb_start + y, "┃", active_style);
+                buf.set_string(
+                    vscrollbar_area.x,
+                    vscrollbar_area.y + thumb_start + y,
+                    "┃",
+                    active_style,
+                );
             }
         }
 
+        // ================================================================
+        // Render PCH candidates (right section, full height)
+        // ================================================================
+        if pch_width > 0 && pch_area.height > 0 {
+            let now = Instant::now();
+            let copy_confirmed = self
+                .copy_confirmed_at
+                .map_or(false, |t| now.duration_since(t).as_secs() < 3);
+
+            PchCandidatesWidget {
+                candidates: &self.pch_candidates,
+                scroll_offset: self.pch_scroll_offset,
+                selected_index: self.pch_selected_index,
+                copy_confirmed,
+            }
+            .render(pch_area, buf);
+        }
+
+        // ================================================================
+        // Render details (left section, bottom)
+        // ================================================================
         if let Some(si) = self.selected_span {
             if let Some(span) = self.spans.get(si) {
-                let parent_duration = span.parent_index.and_then(|pi| self.spans.get(pi)).map(|p| p.duration);
+                let parent_duration = span
+                    .parent_index
+                    .and_then(|pi| self.spans.get(pi))
+                    .map(|p| p.duration);
                 let view = AggregateSpanView {
                     view: SpanView {
                         span_index: si,
@@ -635,6 +811,7 @@ impl Tab for SourcesTab {
             ("Esc", "Clear selection"),
             ("Tab", "Next track"),
             ("Shift + Tab", "Previous track"),
+            ("Ctrl + Y", "Copy PCH #includes"),
         ]
     }
 
@@ -666,6 +843,18 @@ impl Tab for SourcesTab {
 }
 
 impl SourcesTab {
+    fn copy_includes_to_clipboard(&mut self) {
+        let includes = PchCandidatesWidget {
+            candidates: &self.pch_candidates,
+            scroll_offset: 0,
+            selected_index: None,
+            copy_confirmed: false,
+        }
+        .build_includes();
+        let _ = write_to_clipboard(&includes);
+        self.copy_confirmed_at = Some(Instant::now());
+    }
+
     fn find_matches(&self) -> Vec<usize> {
         let query = match &self.search_query {
             Some(q) if !q.is_empty() => q.to_lowercase(),
@@ -806,5 +995,107 @@ fn aggregate_sources(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
     }
 
     (new_spans, counts)
+}
+
+/// Compute PCH candidates by grouping aggregated spans by file identifier
+/// (ignoring ancestor path). Returns candidates sorted by total_duration desc,
+/// plus a map from identifier → list of span indices.
+fn compute_pch_candidates(
+    spans: &[Span],
+    counts: &[usize],
+) -> (Vec<PchCandidate>, HashMap<String, Vec<usize>>) {
+    // Group by identifier: accumulate total_duration and total_count.
+    let mut map: HashMap<String, (f64, usize)> = HashMap::new();
+    // Also track which span indices belong to each identifier.
+    let mut span_map: HashMap<String, Vec<usize>> = HashMap::new();
+
+    for (i, span) in spans.iter().enumerate() {
+        let entry = map.entry(span.identifier.clone()).or_insert((0.0, 0));
+        entry.0 += span.duration;
+        entry.1 += counts[i];
+        span_map
+            .entry(span.identifier.clone())
+            .or_default()
+            .push(i);
+    }
+
+    // Build candidate list, exclude files appearing in only 1 TU (no PCH benefit)
+    let mut candidates: Vec<PchCandidate> = map
+        .into_iter()
+        .filter(|(_, (_, total_count))| *total_count > 1)
+        .map(|(ident, (total_dur, total_count))| {
+            PchCandidate::new(
+                ident.clone(),
+                span_label_for_identifier(spans, &ident),
+                total_dur,
+                total_count,
+            )
+        })
+        .collect();
+
+    // Sort by total_duration descending, keep top 10
+    candidates.sort_by(|a, b| {
+        b.total_duration
+            .partial_cmp(&a.total_duration)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    candidates.truncate(10);
+
+    // Also prune span_map to only keep top 10 identifiers
+    let top_idents: std::collections::HashSet<String> = candidates
+        .iter()
+        .map(|c| c.identifier.clone())
+        .collect();
+    span_map.retain(|k, _| top_idents.contains(k));
+
+    (candidates, span_map)
+}
+
+/// Find the label for a given identifier by looking at any span with that identifier.
+fn span_label_for_identifier(spans: &[Span], identifier: &str) -> String {
+    spans
+        .iter()
+        .find(|s| s.identifier == identifier)
+        .map(|s| s.label.clone())
+        .unwrap_or_else(|| identifier.to_string())
+}
+
+/// Write text to the terminal clipboard using OSC 52 escape sequence.
+/// Works with most modern terminals (kitty, wezterm, foot, alacritty, iTerm2, etc.).
+fn write_to_clipboard(text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    // Base64-encode the text
+    let encoded = base64_encode(text);
+    // OSC 52: \x1b]52;c;<base64>\x07
+    let mut stdout = std::io::stdout().lock();
+    write!(stdout, "\x1b]52;c;{}\x07", encoded)?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// Simple base64 encoder (no external dependency needed).
+fn base64_encode(input: &str) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = input.as_bytes();
+    let mut result = String::new();
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        result.push(CHARS[((n >> 18) & 0x3F) as usize] as char);
+        result.push(CHARS[((n >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(CHARS[((n >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(CHARS[(n & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
 }
 
