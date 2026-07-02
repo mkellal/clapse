@@ -433,6 +433,7 @@ impl Tab for SourcesTab {
             KeyCode::Tab => self.switch_track(HorizontalDirection::Next),
             KeyCode::BackTab => self.switch_track(HorizontalDirection::Previous),
             KeyCode::Char('y') if ctrl => self.copy_includes_to_clipboard(),
+            KeyCode::Char('y') => self.copy_span_identifier(),
             _ => {}
         }
         false
@@ -818,6 +819,7 @@ impl Tab for SourcesTab {
             ("Esc", "Clear selection"),
             ("Tab", "Next track"),
             ("Shift + Tab", "Previous track"),
+            ("y", "Copy span identifier"),
             ("Ctrl + Y", "Copy PCH #includes"),
         ]
     }
@@ -850,6 +852,14 @@ impl Tab for SourcesTab {
 }
 
 impl SourcesTab {
+    fn copy_span_identifier(&self) {
+        if let Some(si) = self.selected_span {
+            if let Some(span) = self.spans.get(si) {
+                let _ = write_to_clipboard(&span.identifier);
+            }
+        }
+    }
+
     fn copy_includes_to_clipboard(&mut self) {
         let includes = CandidatesWidget {
             title: "",

@@ -68,36 +68,37 @@ pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData, build_dir: &std::path:
             .as_ref()
             .and_then(|a| a.detail.clone())
             .unwrap_or_default();
+        let cleaned = clean_identifier(&args_detail, build_dir);
         let (type_, identifier, label, sublabel): (SpanType, String, String, Option<String>) =
             match name.as_str() {
                 "Source" => (
                     SpanType::Source,
                     args_detail.clone(),
-                    clean_identifier(&args_detail, build_dir),
+                    cleaned,
                     Some("Inclusion".to_string()),
                 ),
                 "ParseClass" => (
                     SpanType::Class,
                     args_detail.clone(),
-                    clean_identifier(&args_detail, build_dir),
+                    cleaned,
                     Some("Parsing".to_string()),
                 ),
                 "ParseTemplate" => (
                     SpanType::Template,
                     args_detail.clone(),
-                    clean_identifier(&args_detail, build_dir),
+                    cleaned,
                     Some("Parsing".to_string()),
                 ),
                 "InstantiateClass" => (
                     SpanType::Class,
                     args_detail.clone(),
-                    clean_identifier(&args_detail, build_dir),
+                    cleaned,
                     Some("Instantiation".to_string()),
                 ),
                 "InstantiateTemplate" => (
                     SpanType::Template,
                     args_detail.clone(),
-                    clean_identifier(&args_detail, build_dir),
+                    cleaned,
                     Some("Instantiation".to_string()),
                 ),
                 "Frontend"

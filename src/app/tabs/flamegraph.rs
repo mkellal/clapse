@@ -415,6 +415,7 @@ impl Tab for FlameGraphTab {
             KeyCode::Esc => self.selected_span = None,
             KeyCode::Tab => self.switch_track(HorizontalDirection::Next),
             KeyCode::BackTab => self.switch_track(HorizontalDirection::Previous),
+            KeyCode::Char('y') => self.copy_span_identifier(),
             KeyCode::Char('m') => self.toggle_sort_mode(),
             _ => {}
         }
@@ -662,6 +663,7 @@ impl Tab for FlameGraphTab {
             ("Esc", "Clear selection"),
             ("Tab", "Next track"),
             ("Shift + Tab", "Previous track"),
+            ("y", "Copy span identifier"),
             ("m", "Toggle sort mode"),
         ]
     }
@@ -739,4 +741,46 @@ impl FlameGraphTab {
         self.zoom_to_selected(None);
         self.center_selected_track();
     }
+
+    fn copy_span_identifier(&self) {
+        if let Some(si) = self.selected_span {
+            if let Some(span) = self.spans.get(si) {
+                let _ = write_to_clipboard(&span.identifier);
+            }
+        }
+    }
+}
+
+fn write_to_clipboard(text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let encoded = base64_encode(text);
+    let mut stdout = std::io::stdout().lock();
+    write!(stdout, "\x1b]52;c;{}\x07", encoded)?;
+    stdout.flush()?;
+    Ok(())
+}
+
+fn base64_encode(input: &str) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = input.as_bytes();
+    let mut result = String::new();
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        result.push(CHARS[((n >> 18) & 0x3F) as usize] as char);
+        result.push(CHARS[((n >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(CHARS[((n >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(CHARS[(n & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
 }
