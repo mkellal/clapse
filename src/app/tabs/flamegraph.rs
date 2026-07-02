@@ -15,7 +15,7 @@ pub struct FlameGraphTab {
 impl FlameGraphTab {
     pub fn new(raw_spans: Rc<[Span]>) -> Self {
         Self {
-            flamegraph: FlamegraphWidget::new(raw_spans, None, OrderBy::StartTime, None),
+            flamegraph: FlamegraphWidget::new(raw_spans, None, OrderBy::StartTime, None, true),
         }
     }
 }

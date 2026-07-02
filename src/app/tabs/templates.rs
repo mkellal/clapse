@@ -37,6 +37,7 @@ impl TemplatesTab {
             Some(vec!["Templates".to_string()]),
             OrderBy::Duration,
             Some(counts.clone()),
+            false,
         );
 
         Self {

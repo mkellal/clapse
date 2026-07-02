@@ -39,6 +39,7 @@ impl SourcesTab {
             Some(vec!["Sources".to_string()]),
             OrderBy::Duration,
             Some(counts.clone()),
+            false,
         );
 
         Self {

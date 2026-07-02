@@ -4,10 +4,12 @@ use std::rc::Rc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Style};
+use ratatui::text::{self, Line};
 use ratatui::widgets::{Block, Borders, Widget};
 
+use super::track::{TrackInput, track_content_height};
 use crate::app::span::Span;
 use crate::app::view::{
     AggregateSpanView, FollowingSpanDirection, HorizontalDirection, OrderBy, SpanView,
@@ -15,7 +17,6 @@ use crate::app::view::{
 };
 use crate::widgets::span_details::SpanDetails;
 use crate::widgets::time_range::DurationRange;
-use super::track::{TrackInput, track_content_height};
 
 // ---------------------------------------------------------------------------
 // Zoom direction (private to this module)
@@ -52,6 +53,8 @@ pub struct FlamegraphWidget {
     counts: Option<Vec<usize>>,
     /// Labels for each track (e.g. "Thread 0", "Sources", "Templates").
     track_labels: Vec<String>,
+    /// Whether sort-mode toggling is enabled (shows `<m>` title in border).
+    sortable: bool,
 }
 
 impl FlamegraphWidget {
@@ -62,11 +65,13 @@ impl FlamegraphWidget {
     /// * `track_labels` — one label per track. If `None`, auto-generates "Thread N".
     /// * `order_by` — initial sort order.
     /// * `counts` — per-span occurrence counts for aggregated views (Sources/Templates).
+    /// * `sortable` — if true, sort mode can be toggled and `<m>` title is shown.
     pub fn new(
         raw_spans: Rc<[Span]>,
         track_labels: Option<Vec<String>>,
         order_by: OrderBy,
         counts: Option<Vec<usize>>,
+        sortable: bool,
     ) -> Self {
         let mut track_roots = schedule_spans(&raw_spans);
 
@@ -79,8 +84,7 @@ impl FlamegraphWidget {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        let (tracks_start_time, tracks_by_duration) =
-            build_track_views(&raw_spans, &track_roots);
+        let (tracks_start_time, tracks_by_duration) = build_track_views(&raw_spans, &track_roots);
 
         let mut root_track_map = HashMap::new();
         for (ti, roots) in track_roots.iter().enumerate() {
@@ -112,6 +116,7 @@ impl FlamegraphWidget {
             search_query: None,
             counts,
             track_labels: labels,
+            sortable,
         }
     }
 
@@ -177,8 +182,7 @@ impl FlamegraphWidget {
                         let roots: Vec<usize> = views
                             .iter()
                             .filter(|v| {
-                                self.spans[v.span_index].parent_index.is_none()
-                                    && v.was_displayed
+                                self.spans[v.span_index].parent_index.is_none() && v.was_displayed
                             })
                             .map(|v| v.span_index)
                             .filter(|&x| seen.insert(x))
@@ -226,8 +230,7 @@ impl FlamegraphWidget {
                     views
                         .iter()
                         .find(|v| {
-                            self.spans[v.span_index].parent_index == Some(si)
-                                && v.was_displayed
+                            self.spans[v.span_index].parent_index == Some(si) && v.was_displayed
                         })
                         .map(|v| v.span_index)
                 };
@@ -275,8 +278,7 @@ impl FlamegraphWidget {
             self.vertical_scroll = 0;
             return;
         }
-        let track_center =
-            track_start.saturating_add(track_end.saturating_sub(track_start) / 2);
+        let track_center = track_start.saturating_add(track_end.saturating_sub(track_start) / 2);
         let max_scroll = total_height.saturating_sub(self.viewport_height);
         self.vertical_scroll = track_center
             .saturating_sub(self.viewport_height / 2)
@@ -292,6 +294,9 @@ impl FlamegraphWidget {
     }
 
     pub fn toggle_sort_mode(&mut self) {
+        if !self.sortable {
+            return;
+        }
         self.order_by = match self.order_by {
             OrderBy::StartTime => OrderBy::Duration,
             OrderBy::Duration => OrderBy::StartTime,
@@ -591,9 +596,29 @@ impl FlamegraphWidget {
         let visible_duration = total_duration / self.zoom;
 
         // ── bordered block ──────────────────────────────────────────
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray));
+        let block = if self.sortable {
+            let mode_label = match self.order_by {
+                OrderBy::StartTime => "Start Time",
+                OrderBy::Duration => "Duration",
+            };
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(Line::from(vec![
+                    text::Span::styled(" <", Color::DarkGray),
+                    text::Span::styled("m", Color::Red),
+                    text::Span::styled("> ", Color::DarkGray),
+                    text::Span::raw("Sort Mode: "),
+                    text::Span::raw(mode_label),
+                    text::Span::raw(" "),
+                ]))
+                .title_alignment(Alignment::Center)
+                .title_style(Style::default().fg(Color::Gray))
+        } else {
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray))
+        };
         let inner = block.inner(area);
         block.render(area, buf);
 
@@ -609,8 +634,7 @@ impl FlamegraphWidget {
             .height
             .saturating_sub(scrollbar_height + details_height);
 
-        let scrollbar_area =
-            Rect::new(inner.x, inner.y, inner.width, scrollbar_height);
+        let scrollbar_area = Rect::new(inner.x, inner.y, inner.width, scrollbar_height);
         let graph_outer = Rect::new(
             inner.x,
             inner.y + scrollbar_height,
@@ -727,8 +751,7 @@ impl FlamegraphWidget {
                 let visible_rows = overlap_end - overlap_start;
                 let row_skip = overlap_start - track_top;
                 let render_y = graph_area.y + (overlap_start - viewport_top);
-                let track_area =
-                    Rect::new(graph_area.x, render_y, graph_area.width, visible_rows);
+                let track_area = Rect::new(graph_area.x, render_y, graph_area.width, visible_rows);
 
                 super::track::TrackWidget {
                     label: track.label.as_deref(),
@@ -767,10 +790,8 @@ impl FlamegraphWidget {
             let thumb_start = if max_scroll == 0 {
                 0
             } else {
-                let max_thumb_start =
-                    vscrollbar_area.height.saturating_sub(thumb_height) as u32;
-                ((self.vertical_scroll as u32) * max_thumb_start / max_scroll as u32)
-                    as u16
+                let max_thumb_start = vscrollbar_area.height.saturating_sub(thumb_height) as u32;
+                ((self.vertical_scroll as u32) * max_thumb_start / max_scroll as u32) as u16
             };
 
             for y in 0..thumb_height {
@@ -882,7 +903,6 @@ impl FlamegraphWidget {
             }
         }
     }
-
 }
 
 // ---------------------------------------------------------------------------
