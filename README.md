@@ -63,7 +63,6 @@ clapse <build-dir> --verbose # Enable verbose JSON parsing output
 | `Space` | Zoom to selected span |
 | `r` | Reset zoom & pan |
 | `Tab` / `Shift+Tab` | Next / previous track |
-| `y` | Copy selected span identifier to clipboard |
 | `m` | Toggle sort mode (flamegraph tab) |
 | `Ctrl+Y` | Copy candidates to clipboard (sources/templates) |
 | `Esc` | Deselect span / close search |

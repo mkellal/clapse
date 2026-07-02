@@ -25,11 +25,6 @@ use crate::app::view::{LoadProgress, load_spans_with_progress};
 use crate::cli;
 use crate::widgets::start_screen::StartScreenWidget;
 
-enum ZoomDirection {
-    In,
-    Out,
-}
-
 /// RAII guard that enables mouse capture on creation and disables it on drop.
 struct MouseCaptureGuard;
 
