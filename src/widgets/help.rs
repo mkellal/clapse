@@ -91,4 +91,3 @@ fn render_column(items: &[(&str, &str)], area: Rect, buf: &mut Buffer) {
         y += 1;
     }
 }
-

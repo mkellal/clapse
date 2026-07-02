@@ -1,6 +1,8 @@
 pub mod color;
 pub mod flamegraph;
+pub mod help;
 pub mod pch_candidates;
+pub mod search;
 pub mod span;
 pub mod span_details;
 pub mod start_screen;

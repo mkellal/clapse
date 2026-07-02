@@ -9,14 +9,12 @@ use ratatui::text::{self, Line, Text};
 use ratatui::widgets::{Tabs, Widget};
 use std::rc::Rc;
 
-pub mod help;
-pub mod search;
 pub mod span;
 pub mod tabs;
 pub mod view;
 
-use crate::app::help::HelpPopup;
-use crate::app::search::SearchState;
+use crate::widgets::help::HelpPopup;
+use crate::widgets::search::SearchState;
 use crate::app::span::Span;
 use crate::app::tabs::flamegraph::FlameGraphTab;
 use crate::app::tabs::sources::SourcesTab;
