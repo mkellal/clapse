@@ -220,3 +220,93 @@ fn render_spans(
     }
     cell_map.extend(subcell_winners.into_iter().map(|(k, si)| (k, si)));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::span::{Span, SpanType};
+
+    fn make_span(duration: f64, depth: usize) -> Span {
+        Span {
+            type_: SpanType::Source,
+            identifier: String::new(),
+            label: String::new(),
+            sublabel: None,
+            start_time: 0.0,
+            duration,
+            parent_index: None,
+            children_indices: Vec::new(),
+            root_span_index: 0,
+            depth,
+        }
+    }
+
+    fn make_view(span_index: usize) -> SpanView {
+        SpanView {
+            span_index,
+            effective_start: 0.0,
+            index_in_parent: 0,
+            has_core_cells: false,
+            was_displayed: false,
+        }
+    }
+
+    // ── track_content_height ──
+
+    #[test]
+    fn test_content_height_zero_width() {
+        let views: [SpanView; 0] = [];
+        let spans: [Span; 0] = [];
+        assert_eq!(track_content_height(&views, &spans, 100.0, 0), 1);
+    }
+
+    #[test]
+    fn test_content_height_no_views() {
+        let views: [SpanView; 0] = [];
+        let spans: [Span; 0] = [];
+        assert_eq!(track_content_height(&views, &spans, 100.0, 10), 1);
+    }
+
+    #[test]
+    fn test_content_height_all_too_thin() {
+        // cell_duration = 100.0 / 10 = 10.0µs, span duration 1.0 < 10.0 → filtered out
+        let spans = vec![make_span(1.0, 3)];
+        let views = vec![make_view(0)];
+        assert_eq!(track_content_height(&views, &spans, 100.0, 10), 1);
+    }
+
+    #[test]
+    fn test_content_height_one_visible() {
+        // cell_duration = 10.0, span duration 100 > 10 → visible, depth 3 → height 4
+        let spans = vec![make_span(100.0, 3)];
+        let views = vec![make_view(0)];
+        assert_eq!(track_content_height(&views, &spans, 100.0, 10), 4);
+    }
+
+    #[test]
+    fn test_content_height_max_of_several() {
+        // cell_duration = 10.0, all durations > 10 → all visible
+        let spans = vec![
+            make_span(100.0, 1),
+            make_span(100.0, 2),
+            make_span(100.0, 5),
+        ];
+        let views: Vec<SpanView> = (0..3).map(make_view).collect();
+        // max depth = 5 → height = 6
+        assert_eq!(track_content_height(&views, &spans, 100.0, 10), 6);
+    }
+
+    #[test]
+    fn test_content_height_some_thin_some_thick() {
+        // cell_duration = 10.0
+        let spans = vec![
+            make_span(1.0, 4),    // too thin, ignored
+            make_span(100.0, 2),  // visible, depth 2
+            make_span(5.0, 10),   // too thin, ignored even though depth is high
+            make_span(50.0, 3),   // visible, depth 3
+        ];
+        let views: Vec<SpanView> = (0..4).map(make_view).collect();
+        // max visible depth = 3 → height = 4
+        assert_eq!(track_content_height(&views, &spans, 100.0, 10), 4);
+    }
+}

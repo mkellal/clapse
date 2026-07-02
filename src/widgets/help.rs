@@ -91,3 +91,117 @@ fn render_column(items: &[(&str, &str)], area: Rect, buf: &mut Buffer) {
         y += 1;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Collect all text from a buffer row as a String.
+    fn row_text(buf: &Buffer, y: u16, x_start: u16, width: u16) -> String {
+        (x_start..x_start + width)
+            .map(|x| buf.cell((x, y)).map_or(" ", |c| c.symbol()).to_string())
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    }
+
+    /// Check if the full buffer text (all rows concatenated) contains `needle`.
+    fn buffer_contains(buf: &Buffer, needle: &str) -> bool {
+        for y in 0..buf.area.height {
+            let row: String = (0..buf.area.width)
+                .map(|x| buf.cell((x, y)).map_or(" ", |c| c.symbol()))
+                .collect();
+            if row.contains(needle) {
+                return true;
+            }
+        }
+        false
+    }
+
+    // ── render_column ──
+
+    #[test]
+    fn test_render_column_single_item() {
+        let area = Rect::new(0, 0, 30, 5);
+        let mut buf = Buffer::empty(area);
+        let items = vec![("q", "Quit")];
+        render_column(&items, area, &mut buf);
+
+        let line = row_text(&buf, 0, 0, 30);
+        assert!(line.contains("<q>"), "should contain <q>, got: {line}");
+        assert!(line.contains("Quit"), "should contain Quit, got: {line}");
+    }
+
+    #[test]
+    fn test_render_column_multiple_items() {
+        let area = Rect::new(0, 0, 30, 5);
+        let mut buf = Buffer::empty(area);
+        let items = vec![("a", "Alpha"), ("b", "Beta"), ("c", "Gamma")];
+        render_column(&items, area, &mut buf);
+
+        assert!(row_text(&buf, 0, 0, 30).contains("Alpha"));
+        assert!(row_text(&buf, 1, 0, 30).contains("Beta"));
+        assert!(row_text(&buf, 2, 0, 30).contains("Gamma"));
+    }
+
+    #[test]
+    fn test_render_column_clipped() {
+        let area = Rect::new(0, 0, 30, 2);
+        let mut buf = Buffer::empty(area);
+        let items = vec![("a", "First"), ("b", "Second"), ("c", "Third")];
+        render_column(&items, area, &mut buf);
+
+        // First two should render, third should be clipped
+        assert!(row_text(&buf, 0, 0, 30).contains("First"));
+        assert!(row_text(&buf, 1, 0, 30).contains("Second"));
+        // Row 2 doesn't exist (area height is 2, rows 0 and 1)
+    }
+
+    // ── HelpPopup widget ──
+
+    #[test]
+    fn test_help_popup_renders_defaults() {
+        let area = Rect::new(0, 0, 80, 20);
+        let mut buf = Buffer::empty(area);
+        let popup = HelpPopup::new(vec![]);
+        popup.render(area, &mut buf);
+
+        // All 6 defaults should appear
+        assert!(buffer_contains(&buf, "Quit"), "should contain Quit");
+        assert!(buffer_contains(&buf, "Search"), "should contain Search");
+        assert!(buffer_contains(&buf, "Toggle help"), "should contain Toggle help");
+        assert!(buffer_contains(&buf, "Jump to tab"), "should contain Jump to tab");
+        assert!(buffer_contains(&buf, "Next tab"), "should contain Next tab");
+        assert!(buffer_contains(&buf, "Close help"), "should contain Close help");
+    }
+
+    #[test]
+    fn test_help_popup_with_custom_combinations() {
+        let area = Rect::new(0, 0, 80, 20);
+        let mut buf = Buffer::empty(area);
+        let popup = HelpPopup::new(vec![("x", "Custom action")]);
+        popup.render(area, &mut buf);
+
+        // Defaults still present
+        assert!(buffer_contains(&buf, "Quit"));
+        // Custom entry added
+        assert!(buffer_contains(&buf, "Custom action"), "should contain custom entry");
+    }
+
+    #[test]
+    fn test_help_popup_too_small_area_still_renders() {
+        // Very small area — should still render without panic
+        let area = Rect::new(0, 0, 20, 5);
+        let mut buf = Buffer::empty(area);
+        let popup = HelpPopup::new(vec![]);
+        popup.render(area, &mut buf);
+
+        // Just verify it didn't panic — at minimum the title should render
+        let has_content = (0..area.height).any(|y| {
+            (0..area.width).any(|x| {
+                buf.cell((x, y)).map_or(false, |c| !c.symbol().trim().is_empty())
+            })
+        });
+        assert!(has_content, "buffer should have some rendered content");
+    }
+}

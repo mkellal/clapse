@@ -58,18 +58,120 @@ pub fn clean_trace_file_path(full_path: &Path, build_dir: &Path) -> Option<PathB
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+
+    // ── clean_trace_file_path tests ──
 
     #[test]
-    fn test_clean_trace_file_path() {
+    fn test_clean_with_cmakefiles() {
         let build_dir = Path::new("../projects/opensource/clapse/build");
         let full_path = Path::new(
             "../projects/opensource/clapse/build/lib/core/CMakeFiles/some_target.dir/src/awesome_file.cpp.json",
         );
-
         let result = clean_trace_file_path(full_path, build_dir).unwrap();
+        assert_eq!(result, PathBuf::from("lib/core/src/awesome_file.cpp"));
+    }
 
-        let expected = PathBuf::from("lib/core/src/awesome_file.cpp");
+    #[test]
+    fn test_clean_no_cmakefiles() {
+        let build_dir = Path::new("/build");
+        let full_path = Path::new("/build/lib/core/src/file.cpp.json");
+        let result = clean_trace_file_path(full_path, build_dir).unwrap();
+        assert_eq!(result, PathBuf::from("lib/core/src/file.cpp"));
+    }
 
-        assert_eq!(result, expected);
+    #[test]
+    fn test_clean_multiple_cmakefiles() {
+        let build_dir = Path::new("/build");
+        let full_path =
+            Path::new("/build/CMakeFiles/a.dir/CMakeFiles/b.dir/src/z.cpp.json");
+        let result = clean_trace_file_path(full_path, build_dir).unwrap();
+        // First CMakeFiles → skip "a.dir", second CMakeFiles → skip "b.dir"
+        assert_eq!(result, PathBuf::from("src/z.cpp"));
+    }
+
+    #[test]
+    fn test_clean_build_dir_not_prefix() {
+        let build_dir = Path::new("/build");
+        let full_path = Path::new("/other/path/file.cpp.json");
+        assert!(clean_trace_file_path(full_path, build_dir).is_none());
+    }
+
+    #[test]
+    fn test_clean_path_equals_build_dir() {
+        let build_dir = Path::new("/build");
+        let full_path = Path::new("/build");
+        let result = clean_trace_file_path(full_path, build_dir).unwrap();
+        assert_eq!(result, PathBuf::from(""));
+    }
+
+    #[test]
+    fn test_clean_no_extension() {
+        let build_dir = Path::new("/build");
+        let full_path = Path::new("/build/src/file");
+        let result = clean_trace_file_path(full_path, build_dir).unwrap();
+        assert_eq!(result, PathBuf::from("src/file"));
+    }
+
+    #[test]
+    fn test_clean_hidden_file() {
+        let build_dir = Path::new("/build");
+        let full_path = Path::new("/build/.hidden.cpp.json");
+        let result = clean_trace_file_path(full_path, build_dir).unwrap();
+        assert_eq!(result, PathBuf::from(".hidden.cpp"));
+    }
+
+    // ── get_trace_files tests ──
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("clapse_test_{}_{}", std::process::id(), name));
+        // Remove leftovers from previous failed runs, then recreate
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn cleanup_temp_dir(dir: &PathBuf) {
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_get_trace_files_both_exist() {
+        let dir = unique_temp_dir("both_exist");
+        // Create subdirectory to test recursive glob
+        let sub = dir.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+
+        let json_path = sub.join("a.cpp.json");
+        let obj_path = sub.join("a.cpp.o");
+        fs::write(&json_path, "{}").unwrap();
+        fs::write(&obj_path, "").unwrap();
+
+        let result = get_trace_files(&dir);
+        assert!(result.contains(&json_path), "should find a.cpp.json when .o exists");
+
+        cleanup_temp_dir(&dir);
+    }
+
+    #[test]
+    fn test_get_trace_files_json_only_no_obj() {
+        let dir = unique_temp_dir("json_only");
+        let json_path = dir.join("b.cpp.json");
+        fs::write(&json_path, "{}").unwrap();
+        // No .o file created
+
+        let result = get_trace_files(&dir);
+        assert!(!result.contains(&json_path), "should exclude json without matching .o");
+
+        cleanup_temp_dir(&dir);
+    }
+
+    #[test]
+    fn test_get_trace_files_empty_dir() {
+        let dir = unique_temp_dir("empty_dir");
+        let result = get_trace_files(&dir);
+        assert!(result.is_empty(), "empty dir should return empty vec");
+
+        cleanup_temp_dir(&dir);
     }
 }
