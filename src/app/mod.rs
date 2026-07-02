@@ -119,7 +119,7 @@ impl Widget for &mut App {
         let title = Text::from("Clapse").bold();
         let help = Text::from(Line::from(vec![
             text::Span::styled("<", Color::DarkGray),
-            text::Span::styled("h", Color::Red),
+            text::Span::styled("?", Color::Red),
             text::Span::styled("> ", Color::DarkGray),
             text::Span::raw("Help ℹ️"),
         ]))
@@ -284,12 +284,19 @@ impl App {
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') => return true,
             KeyCode::Char('c') | KeyCode::Char('C') if ctrl => return true,
-            KeyCode::Char('h') | KeyCode::Char('H') => {
+            KeyCode::Char('?') => {
                 self.show_help = !self.show_help;
                 return false;
             }
             KeyCode::Char('s') | KeyCode::Char('S') => {
                 self.search.open(&mut *self.tabs[self.current_tab_index]);
+                return false;
+            }
+            KeyCode::Char(c @ ('1' | '2' | '3')) if alt => {
+                let idx = (c as u8 - b'1') as usize;
+                if idx < self.tabs.len() {
+                    self.current_tab_index = idx;
+                }
                 return false;
             }
             KeyCode::Char('t') | KeyCode::Char('T') if alt => {

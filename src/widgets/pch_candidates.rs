@@ -58,19 +58,19 @@ impl<'a> CandidatesWidget<'a> {
     pub const HEADER_HEIGHT: u16 = 2;
     pub const CANDIDATE_ROWS: u16 = 2;
 
-    fn copy_button_label(&self) -> &str {
+    fn copy_button(&self) -> (&str, Color) {
         if self.copy_confirmed {
-            " ✓ Copied "
+            (" ✓ Copied ", Color::Green)
         } else {
             match self.copy_mode {
-                CopyMode::Includes => "📋 Copy #includes",
-                CopyMode::ExternTemplate => "📋 Copy externs",
+                CopyMode::Includes => ("📋  Copy #includes ", Color::Blue),
+                CopyMode::ExternTemplate => ("📋  Copy externs ", Color::Blue),
             }
         }
     }
 
     pub fn hit_copy_button(&self, area: Rect, col: u16, row: u16) -> bool {
-        let btn_text = self.copy_button_label();
+        let (btn_text, _) = self.copy_button();
         let button_width: u16 = btn_text.len() as u16;
         let btn_x = area.x + area.width.saturating_sub(button_width + 1);
         let btn_y = area.y + 1;
@@ -128,14 +128,7 @@ impl Widget for CandidatesWidget<'_> {
             Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
         );
 
-        let (btn_text, btn_bg) = if self.copy_confirmed {
-            (" ✓ Copied ", Color::Green)
-        } else {
-            match self.copy_mode {
-                CopyMode::Includes => ("📋 Copy #includes", Color::Blue),
-                CopyMode::ExternTemplate => ("📋 Copy externs", Color::Blue),
-            }
-        };
+        let (btn_text, btn_bg) = self.copy_button();
         let btn_width = btn_text.len() as u16;
         let btn_x = inner.x + inner.width.saturating_sub(btn_width);
         let btn_style = Style::default().fg(Color::Black).bg(btn_bg);

@@ -782,7 +782,9 @@ impl Tab for TemplatesTab {
             KeyCode::Right => self.move_selection(FollowingSpanDirection::Next),
             KeyCode::Up => self.move_selection(FollowingSpanDirection::Parent),
             KeyCode::Down => self.move_selection(FollowingSpanDirection::Child),
-            KeyCode::Char(' ') if ctrl => {
+            KeyCode::Char('+') | KeyCode::Char('=') => self.zoom(1.1, ZoomDirection::In),
+            KeyCode::Char('-') => self.zoom(1.1, ZoomDirection::Out),
+            KeyCode::Char('r') => {
                 self.zoom = 1.0;
                 self.start_time = 0.0;
                 self.center_selected_track();
@@ -1102,7 +1104,8 @@ impl Tab for TemplatesTab {
             ("Right", "Next sibling"),
             ("Up", "Parent span"),
             ("Down", "Child span"),
-            ("Ctrl + Space", "Reset zoom"),
+            ("+/-", "Zoom in/out"),
+            ("r", "Reset zoom"),
             ("Space", "Zoom to selection"),
             ("Esc", "Clear selection"),
             ("Tab", "Next track"),

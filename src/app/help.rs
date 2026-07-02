@@ -17,10 +17,12 @@ impl<'a> HelpPopup<'a> {
 impl Widget for HelpPopup<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let mut all_combinations = vec![
+            ("?", "Toggle help"),
             ("q", "Quit"),
             ("s", "Search"),
+            ("Alt + 1/2/3", "Jump to tab"),
             ("Alt + t", "Next tab"),
-            ("Esc", "Close help"),
+            ("Esc", "Close help / deselect"),
         ];
         all_combinations.extend(self.combinations.iter().copied());
 
