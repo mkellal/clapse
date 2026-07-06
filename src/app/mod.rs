@@ -13,14 +13,14 @@ pub mod span;
 pub mod tabs;
 pub mod view;
 
-use crate::widgets::help::HelpPopup;
-use crate::widgets::search::SearchState;
 use crate::app::span::Span;
 use crate::app::tabs::flamegraph::FlameGraphTab;
 use crate::app::tabs::sources::SourcesTab;
 use crate::app::tabs::templates::TemplatesTab;
 use crate::app::view::{LoadProgress, load_spans_with_progress};
 use crate::cli;
+use crate::widgets::help::HelpPopup;
+use crate::widgets::search::SearchState;
 use crate::widgets::start_screen::StartScreenWidget;
 
 /// RAII guard that enables mouse capture on creation and disables it on drop.
@@ -69,22 +69,21 @@ impl Widget for &mut App {
             let msg = if loading.current.total_files > 0 {
                 format!(
                     "Parsing files… ({}/{})",
-                    loading.current.files_processed,
-                    loading.current.total_files
+                    loading.current.files_processed, loading.current.total_files
                 )
             } else {
                 String::from("Discovering trace files…")
             };
-            StartScreenWidget { progress, message: msg }.render(area, buf);
+            StartScreenWidget {
+                progress,
+                message: msg,
+            }
+            .render(area, buf);
             return;
         }
 
         let main_layout = if self.search.visible {
-            Layout::vertical([
-                Constraint::Fill(1),
-                Constraint::Length(3),
-            ])
-            .split(area)
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).split(area)
         } else {
             std::rc::Rc::from([area])
         };
@@ -148,9 +147,7 @@ impl Default for App {
 
         let (progress_tx, progress_rx) = std::sync::mpsc::channel();
 
-        let thread = std::thread::spawn(move || {
-            load_spans_with_progress(&build_dir, progress_tx)
-        });
+        let thread = std::thread::spawn(move || load_spans_with_progress(&build_dir, progress_tx));
 
         Self {
             current_tab_index: 0,
@@ -238,7 +235,7 @@ impl App {
                                     .modifiers
                                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
                             {
-                                return Ok(())
+                                return Ok(());
                             }
                             _ => {}
                         }
@@ -269,40 +266,44 @@ impl App {
 
         // Delegate to search first — use disjoint field borrows.
         {
-            if self.search.handle_key(key, &mut *self.tabs[self.current_tab_index]) {
+            if self
+                .search
+                .handle_key(key, &mut *self.tabs[self.current_tab_index])
+            {
                 return false;
             }
         }
 
         match key.code {
-            KeyCode::Char('q') | KeyCode::Char('Q') => return true,
-            KeyCode::Char('c') | KeyCode::Char('C') if ctrl => return true,
+            KeyCode::Char('q') | KeyCode::Char('Q') => true,
+            KeyCode::Char('c') | KeyCode::Char('C') if ctrl => true,
             KeyCode::Char('?') => {
                 self.show_help = !self.show_help;
-                return false;
+                false
             }
             KeyCode::Char('s') | KeyCode::Char('S') => {
                 self.search.open(&mut *self.tabs[self.current_tab_index]);
-                return false;
+                false
             }
             KeyCode::Char(c @ ('1' | '2' | '3')) if alt => {
                 let idx = (c as u8 - b'1') as usize;
                 if idx < self.tabs.len() {
                     self.current_tab_index = idx;
                 }
-                return false;
+                false
             }
             KeyCode::Char('t') | KeyCode::Char('T') if alt => {
                 self.current_tab_index = (self.current_tab_index + 1) % self.tabs.len();
-                return false;
+                false
             }
             _ => {
                 if self.show_help {
                     self.show_help = false;
-                    return false;
+                    false
+                } else {
+                    let current_tab = self.get_current_tab();
+                    current_tab.handle_key_event(key)
                 }
-                let current_tab = self.get_current_tab();
-                return current_tab.handle_key_event(key);
             }
         }
     }

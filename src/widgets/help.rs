@@ -27,11 +27,11 @@ impl Widget for HelpPopup<'_> {
         all_combinations.extend(self.combinations.iter().copied());
 
         let n = all_combinations.len();
-        let rows = (n + 1) / 2;
+        let rows = n.div_ceil(2);
         let height = (rows as u16 + 2).min(area.height);
 
         // Find max width for each column to calculate total width
-        let midpoint = (n + 1) / 2;
+        let midpoint = n.div_ceil(2);
         let left_col = &all_combinations[..midpoint];
         let right_col = &all_combinations[midpoint..];
 
@@ -57,17 +57,19 @@ impl Widget for HelpPopup<'_> {
         Clear.render(popup_area, buf);
 
         let block = Block::default()
-            .title(Line::from(vec![
-                Span::raw(" ℹ️ Help "),
-            ]))
+            .title(Line::from(vec![Span::raw(" ℹ️ Help ")]))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Gray));
 
         let inner_area = block.inner(popup_area);
         block.render(popup_area, buf);
 
-        let layout = Layout::horizontal([Constraint::Length(left_width), Constraint::Length(2), Constraint::Length(right_width)])
-            .split(inner_area);
+        let layout = Layout::horizontal([
+            Constraint::Length(left_width),
+            Constraint::Length(2),
+            Constraint::Length(right_width),
+        ])
+        .split(inner_area);
 
         render_column(left_col, layout[0], buf);
         render_column(right_col, layout[2], buf);
@@ -75,8 +77,8 @@ impl Widget for HelpPopup<'_> {
 }
 
 fn render_column(items: &[(&str, &str)], area: Rect, buf: &mut Buffer) {
-    let mut y = area.y;
-    for (key, desc) in items {
+    for (i, (key, desc)) in items.iter().enumerate() {
+        let y = area.y + i as u16;
         if y >= area.bottom() {
             break;
         }
@@ -88,7 +90,6 @@ fn render_column(items: &[(&str, &str)], area: Rect, buf: &mut Buffer) {
             Span::raw(*desc),
         ]);
         line.render(Rect::new(area.x, y, area.width, 1), buf);
-        y += 1;
     }
 }
 
@@ -169,10 +170,19 @@ mod tests {
         // All 6 defaults should appear
         assert!(buffer_contains(&buf, "Quit"), "should contain Quit");
         assert!(buffer_contains(&buf, "Search"), "should contain Search");
-        assert!(buffer_contains(&buf, "Toggle help"), "should contain Toggle help");
-        assert!(buffer_contains(&buf, "Jump to tab"), "should contain Jump to tab");
+        assert!(
+            buffer_contains(&buf, "Toggle help"),
+            "should contain Toggle help"
+        );
+        assert!(
+            buffer_contains(&buf, "Jump to tab"),
+            "should contain Jump to tab"
+        );
         assert!(buffer_contains(&buf, "Next tab"), "should contain Next tab");
-        assert!(buffer_contains(&buf, "Close help"), "should contain Close help");
+        assert!(
+            buffer_contains(&buf, "Close help"),
+            "should contain Close help"
+        );
     }
 
     #[test]
@@ -185,7 +195,10 @@ mod tests {
         // Defaults still present
         assert!(buffer_contains(&buf, "Quit"));
         // Custom entry added
-        assert!(buffer_contains(&buf, "Custom action"), "should contain custom entry");
+        assert!(
+            buffer_contains(&buf, "Custom action"),
+            "should contain custom entry"
+        );
     }
 
     #[test]
@@ -199,7 +212,8 @@ mod tests {
         // Just verify it didn't panic — at minimum the title should render
         let has_content = (0..area.height).any(|y| {
             (0..area.width).any(|x| {
-                buf.cell((x, y)).map_or(false, |c| !c.symbol().trim().is_empty())
+                buf.cell((x, y))
+                    .map_or(false, |c| !c.symbol().trim().is_empty())
             })
         });
         assert!(has_content, "buffer should have some rendered content");

@@ -10,7 +10,7 @@ use crate::app::span::{Span, SpanType};
 use crate::app::tabs::Tab;
 use crate::app::view::OrderBy;
 use crate::widgets::flamegraph::{self, FlamegraphWidget};
-use crate::widgets::pch_candidates::{PchCandidate, CandidatesWidget, CopyMode};
+use crate::widgets::pch_candidates::{CandidatesWidget, CopyMode, PchCandidate};
 
 pub struct SourcesTab {
     flamegraph: FlamegraphWidget,
@@ -94,7 +94,7 @@ impl Tab for SourcesTab {
                 if pch_rect.width > 0 {
                     let copy_confirmed = self
                         .copy_confirmed_at
-                        .map_or(false, |t| Instant::now().duration_since(t).as_secs() < 3);
+                        .is_some_and(|t| Instant::now().duration_since(t).as_secs() < 3);
                     let widget = CandidatesWidget {
                         title: "PCH Candidates",
                         candidates: &self.pch_candidates,
@@ -111,8 +111,8 @@ impl Tab for SourcesTab {
 
                 // Check PCH candidate list clicks
                 if pch_rect.width > 0 {
-                    let block = ratatui::widgets::Block::default()
-                        .borders(ratatui::widgets::Borders::ALL);
+                    let block =
+                        ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL);
                     let inner = block.inner(pch_rect);
                     let list_top = inner.y + CandidatesWidget::HEADER_HEIGHT;
                     if coord.0 >= inner.x
@@ -126,12 +126,12 @@ impl Tab for SourcesTab {
                         if idx < self.pch_candidates.len() {
                             self.pch_selected_index = Some(idx);
                             let ident = self.pch_candidates[idx].identifier.clone();
-                            if let Some(indices) = self.pch_span_map.get(&ident) {
-                                if let Some(&si) = indices.first() {
-                                    self.flamegraph.selected_span = Some(si);
-                                    self.flamegraph.zoom_to_selected(None);
-                                    self.flamegraph.center_selected_track();
-                                }
+                            if let Some(indices) = self.pch_span_map.get(&ident)
+                                && let Some(&si) = indices.first()
+                            {
+                                self.flamegraph.selected_span = Some(si);
+                                self.flamegraph.zoom_to_selected(None);
+                                self.flamegraph.center_selected_track();
                             }
                         }
                         return;
@@ -149,10 +149,10 @@ impl Tab for SourcesTab {
                         .saturating_sub(2)
                         .saturating_sub(CandidatesWidget::HEADER_HEIGHT)
                         / CandidatesWidget::CANDIDATE_ROWS;
-                    let max_scroll = self
-                        .pch_candidates
-                        .len()
-                        .saturating_sub(visible_count as usize) as u16;
+                    let max_scroll =
+                        self.pch_candidates
+                            .len()
+                            .saturating_sub(visible_count as usize) as u16;
                     self.pch_scroll_offset =
                         self.pch_scroll_offset.saturating_sub(1).min(max_scroll);
                     return;
@@ -167,10 +167,10 @@ impl Tab for SourcesTab {
                         .saturating_sub(2)
                         .saturating_sub(CandidatesWidget::HEADER_HEIGHT)
                         / CandidatesWidget::CANDIDATE_ROWS;
-                    let max_scroll = self
-                        .pch_candidates
-                        .len()
-                        .saturating_sub(visible_count as usize) as u16;
+                    let max_scroll =
+                        self.pch_candidates
+                            .len()
+                            .saturating_sub(visible_count as usize) as u16;
                     self.pch_scroll_offset =
                         self.pch_scroll_offset.saturating_add(1).min(max_scroll);
                     return;
@@ -202,7 +202,7 @@ impl Tab for SourcesTab {
             let now = Instant::now();
             let copy_confirmed = self
                 .copy_confirmed_at
-                .map_or(false, |t| now.duration_since(t).as_secs() < 3);
+                .is_some_and(|t| now.duration_since(t).as_secs() < 3);
 
             CandidatesWidget {
                 title: "PCH Candidates",
@@ -243,7 +243,6 @@ impl Tab for SourcesTab {
     }
 }
 
-
 fn aggregate_sources(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
     let mut tree: HashMap<Vec<String>, (f64, usize, String, Option<String>)> = HashMap::new();
 
@@ -258,7 +257,9 @@ fn aggregate_sources(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
         }
         path.reverse();
 
-        let entry = tree.entry(path).or_insert((0.0, 0, span.label.clone(), span.sublabel.clone()));
+        let entry = tree
+            .entry(path)
+            .or_insert((0.0, 0, span.label.clone(), span.sublabel.clone()));
         entry.0 += span.duration;
         entry.1 += 1;
     }
@@ -270,7 +271,9 @@ fn aggregate_sources(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
         } else {
             let dur_a = tree.get(a).unwrap().0;
             let dur_b = tree.get(b).unwrap().0;
-            dur_b.partial_cmp(&dur_a).unwrap_or(std::cmp::Ordering::Equal)
+            dur_b
+                .partial_cmp(&dur_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
         }
     });
 
@@ -293,8 +296,8 @@ fn aggregate_sources(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
             .copied();
 
         let start_time = if let Some(ref pp) = parent_path {
-            let p_index = parent_index.unwrap();
-            let p_start = new_spans[p_index as usize].start_time;
+            let p_index: usize = parent_index.unwrap();
+            let p_start = new_spans[p_index].start_time;
             let offset = current_offset_at_path.entry(pp.clone()).or_insert(0.0);
             let s = p_start + *offset;
             *offset += duration;
@@ -353,10 +356,7 @@ fn compute_pch_candidates(
         let entry = map.entry(span.identifier.clone()).or_insert((0.0, 0));
         entry.0 += span.duration;
         entry.1 += counts[i];
-        span_map
-            .entry(span.identifier.clone())
-            .or_default()
-            .push(i);
+        span_map.entry(span.identifier.clone()).or_default().push(i);
     }
 
     let mut candidates: Vec<PchCandidate> = map
@@ -379,10 +379,8 @@ fn compute_pch_candidates(
     });
     candidates.truncate(10);
 
-    let top_idents: std::collections::HashSet<String> = candidates
-        .iter()
-        .map(|c| c.identifier.clone())
-        .collect();
+    let top_idents: std::collections::HashSet<String> =
+        candidates.iter().map(|c| c.identifier.clone()).collect();
     span_map.retain(|k, _| top_idents.contains(k));
 
     (candidates, span_map)
@@ -395,4 +393,3 @@ fn span_label_for_identifier(spans: &[Span], identifier: &str) -> String {
         .map(|s| s.label.clone())
         .unwrap_or_else(|| identifier.to_string())
 }
-

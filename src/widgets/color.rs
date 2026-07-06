@@ -13,13 +13,13 @@ pub fn span_color(base: Color, depth: usize, horizontal_index: usize) -> Color {
     };
     let hsl = Rgb::from(r0 as f32, g0 as f32, b0 as f32).to_hsl();
 
-    let hue = if horizontal_index % 2 != 0 {
+    let hue = if !horizontal_index.is_multiple_of(2) {
         hsl.get_hue().clamp(0.0, 359.0)
     } else {
         (hsl.get_hue() + 10.0).clamp(0.0, 359.0)
     };
 
-    let lightness = if depth % 2 != 0 {
+    let lightness = if !depth.is_multiple_of(2) {
         hsl.get_lightness().clamp(0.0, 100.0)
     } else {
         (hsl.get_lightness() - 10.0).clamp(0.0, 100.0)

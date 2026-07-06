@@ -168,17 +168,20 @@ impl<'a, V: DetailProvider> Widget for SpanDetails<'a, V> {
 
         if let Some(count) = self.view.count() {
             pills.push(format!(" {} times ", count));
-            pills.push(format!(" ⏱ avg {} ", format_time(span.duration / count as f64)));
+            pills.push(format!(
+                " ⏱ avg {} ",
+                format_time(span.duration / count as f64)
+            ));
             pills.push(format!(" ⏱ sum {} ", format_time(span.duration)));
         } else {
             pills.push(format!(" ⏱ {} ", format_time(span.duration)));
         }
 
-        if let Some(pd) = self.parent_duration {
-            if pd > 0.0 {
-                let pct = span.duration / pd * 100.0;
-                pills.push(format!(" {:.1}% of parent ", pct));
-            }
+        if let Some(pd) = self.parent_duration
+            && pd > 0.0
+        {
+            let pct = span.duration / pd * 100.0;
+            pills.push(format!(" {:.1}% of parent ", pct));
         }
         if self.total_duration > 0.0 {
             let pct = span.duration / self.total_duration * 100.0;

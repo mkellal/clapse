@@ -164,8 +164,8 @@ fn visit_duration_global(
     i: usize,
     virtual_start: f64,
     index_in_parent: usize,
-    root_span_index: usize,
-    position_in_track: usize,
+    _root_span_index: usize,
+    _position_in_track: usize,
     entries: &mut Vec<SpanView>,
 ) {
     entries.push(SpanView {
@@ -191,8 +191,8 @@ fn visit_duration_global(
             c,
             cursor,
             sib_pos,
-            root_span_index,
-            position_in_track,
+            _root_span_index,
+            _position_in_track,
             entries,
         );
         cursor += spans[c].duration;
@@ -316,7 +316,7 @@ pub struct LoadProgress {
 /// with globally-consistent parent/children indices.
 /// Reports progress via `progress_tx` after each file is processed.
 pub fn load_spans_with_progress(
-    build_dir: &std::path::PathBuf,
+    build_dir: &std::path::Path,
     progress_tx: std::sync::mpsc::Sender<LoadProgress>,
 ) -> Vec<Span> {
     let ninja_log_path = build_dir.join(".ninja_log");
@@ -345,7 +345,10 @@ pub fn load_spans_with_progress(
 
     // Process files sequentially so we can report smooth progress.
     for (file_idx, trace_file) in trace_files.iter().enumerate() {
-        let file_size = std::fs::metadata(trace_file).ok().map(|m| m.len()).unwrap_or(0);
+        let file_size = std::fs::metadata(trace_file)
+            .ok()
+            .map(|m| m.len())
+            .unwrap_or(0);
 
         let result = (|| {
             let name = clean_trace_file_path(trace_file, build_dir)
@@ -420,7 +423,7 @@ pub fn load_spans_with_progress(
 
 /// Convenience wrapper that loads spans without progress reporting.
 #[allow(dead_code)]
-pub fn load_spans(build_dir: &std::path::PathBuf) -> Vec<Span> {
+pub fn load_spans(build_dir: &std::path::Path) -> Vec<Span> {
     let (tx, _rx) = std::sync::mpsc::channel();
     load_spans_with_progress(build_dir, tx)
 }

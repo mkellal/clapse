@@ -10,7 +10,7 @@ use crate::app::span::{Span, SpanType};
 use crate::app::tabs::Tab;
 use crate::app::view::OrderBy;
 use crate::widgets::flamegraph::{self, FlamegraphWidget};
-use crate::widgets::pch_candidates::{PchCandidate, CandidatesWidget, CopyMode};
+use crate::widgets::pch_candidates::{CandidatesWidget, CopyMode, PchCandidate};
 
 pub struct TemplatesTab {
     flamegraph: FlamegraphWidget,
@@ -92,7 +92,7 @@ impl Tab for TemplatesTab {
                 if pch_rect.width > 0 {
                     let copy_confirmed = self
                         .copy_confirmed_at
-                        .map_or(false, |t| Instant::now().duration_since(t).as_secs() < 3);
+                        .is_some_and(|t| Instant::now().duration_since(t).as_secs() < 3);
                     let widget = CandidatesWidget {
                         title: "Extern Candidates",
                         candidates: &self.extern_candidates,
@@ -109,8 +109,8 @@ impl Tab for TemplatesTab {
 
                 // Check extern candidate list clicks
                 if pch_rect.width > 0 {
-                    let block = ratatui::widgets::Block::default()
-                        .borders(ratatui::widgets::Borders::ALL);
+                    let block =
+                        ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL);
                     let inner = block.inner(pch_rect);
                     let list_top = inner.y + CandidatesWidget::HEADER_HEIGHT;
                     if coord.0 >= inner.x
@@ -124,12 +124,12 @@ impl Tab for TemplatesTab {
                         if idx < self.extern_candidates.len() {
                             self.extern_selected_index = Some(idx);
                             let ident = self.extern_candidates[idx].identifier.clone();
-                            if let Some(indices) = self.extern_span_map.get(&ident) {
-                                if let Some(&si) = indices.first() {
-                                    self.flamegraph.selected_span = Some(si);
-                                    self.flamegraph.zoom_to_selected(None);
-                                    self.flamegraph.center_selected_track();
-                                }
+                            if let Some(indices) = self.extern_span_map.get(&ident)
+                                && let Some(&si) = indices.first()
+                            {
+                                self.flamegraph.selected_span = Some(si);
+                                self.flamegraph.zoom_to_selected(None);
+                                self.flamegraph.center_selected_track();
                             }
                         }
                         return;
@@ -147,10 +147,10 @@ impl Tab for TemplatesTab {
                         .saturating_sub(2)
                         .saturating_sub(CandidatesWidget::HEADER_HEIGHT)
                         / CandidatesWidget::CANDIDATE_ROWS;
-                    let max_scroll = self
-                        .extern_candidates
-                        .len()
-                        .saturating_sub(visible_count as usize) as u16;
+                    let max_scroll =
+                        self.extern_candidates
+                            .len()
+                            .saturating_sub(visible_count as usize) as u16;
                     self.extern_scroll_offset =
                         self.extern_scroll_offset.saturating_sub(1).min(max_scroll);
                     return;
@@ -165,10 +165,10 @@ impl Tab for TemplatesTab {
                         .saturating_sub(2)
                         .saturating_sub(CandidatesWidget::HEADER_HEIGHT)
                         / CandidatesWidget::CANDIDATE_ROWS;
-                    let max_scroll = self
-                        .extern_candidates
-                        .len()
-                        .saturating_sub(visible_count as usize) as u16;
+                    let max_scroll =
+                        self.extern_candidates
+                            .len()
+                            .saturating_sub(visible_count as usize) as u16;
                     self.extern_scroll_offset =
                         self.extern_scroll_offset.saturating_add(1).min(max_scroll);
                     return;
@@ -200,7 +200,7 @@ impl Tab for TemplatesTab {
             let now = Instant::now();
             let copy_confirmed = self
                 .copy_confirmed_at
-                .map_or(false, |t| now.duration_since(t).as_secs() < 3);
+                .is_some_and(|t| now.duration_since(t).as_secs() < 3);
 
             CandidatesWidget {
                 title: "Extern Candidates",
@@ -303,6 +303,7 @@ struct AggEntry {
 // Span builder
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn push_span(
     new_spans: &mut Vec<Span>,
     counts: &mut Vec<usize>,
@@ -514,15 +515,16 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
     }
     for ((name, args), set) in &tu_sets {
         let key = (name.clone(), args.len());
-        if let Some(arg_map) = by_key.get_mut(&key) {
-            if let Some(entry) = arg_map.get_mut(args) {
-                entry.tu_count = set.len();
-            }
+        if let Some(arg_map) = by_key.get_mut(&key)
+            && let Some(entry) = arg_map.get_mut(args)
+        {
+            entry.tu_count = set.len();
         }
     }
 
     // ── Group (name, arg_count) entries by bare name ─────────────────────
-    let mut by_base: HashMap<String, HashMap<usize, HashMap<Vec<String>, AggEntry>>> = HashMap::new();
+    let mut by_base: HashMap<String, HashMap<usize, HashMap<Vec<String>, AggEntry>>> =
+        HashMap::new();
     for ((name, arg_count), arg_map) in by_key {
         by_base.entry(name).or_default().insert(arg_count, arg_map);
     }
@@ -534,7 +536,11 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
     let mut sorted_bases: Vec<(String, f64)> = by_base
         .iter()
         .map(|(name, ac_map)| {
-            let dur: f64 = ac_map.values().flat_map(|m| m.values()).map(|e| e.duration).sum();
+            let dur: f64 = ac_map
+                .values()
+                .flat_map(|m| m.values())
+                .map(|e| e.duration)
+                .sum();
             (name.clone(), dur)
         })
         .collect();
@@ -546,27 +552,55 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
         if ac_map.len() == 1 {
             // Single arg count → no top-level wrapper needed.
             let (_, arg_map) = ac_map.into_iter().next().unwrap();
-            build_template_tree(base_name, &arg_map, &[], 0, None, &mut new_spans, &mut counts);
+            build_template_tree(
+                base_name,
+                &arg_map,
+                &[],
+                0,
+                None,
+                &mut new_spans,
+                &mut counts,
+            );
         } else {
             // Multiple arg counts → create bare-name top-level parent.
-            let total_dur: f64 = ac_map.values().flat_map(|m| m.values()).map(|e| e.duration).sum();
-            let total_tus: usize = ac_map.values().flat_map(|m| m.values()).map(|e| e.tu_count).sum();
-            let dominant = ac_map.values().flat_map(|m| m.values())
-                .max_by(|a, b| a.duration.partial_cmp(&b.duration).unwrap_or(std::cmp::Ordering::Equal))
+            let total_dur: f64 = ac_map
+                .values()
+                .flat_map(|m| m.values())
+                .map(|e| e.duration)
+                .sum();
+            let total_tus: usize = ac_map
+                .values()
+                .flat_map(|m| m.values())
+                .map(|e| e.tu_count)
+                .sum();
+            let dominant = ac_map
+                .values()
+                .flat_map(|m| m.values())
+                .max_by(|a, b| {
+                    a.duration
+                        .partial_cmp(&b.duration)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
                 .map(|e| (e.span_type, e.sublabel.clone()))
                 .unwrap_or((SpanType::Template, "Instantiation".to_string()));
             let label = base_name.clone();
 
             let top_idx = push_span(
-                &mut new_spans, &mut counts,
-                base_name.clone(), label,
-                total_dur, total_tus,
-                0, None,
-                dominant.0, dominant.1,
+                &mut new_spans,
+                &mut counts,
+                base_name.clone(),
+                label,
+                total_dur,
+                total_tus,
+                0,
+                None,
+                dominant.0,
+                dominant.1,
             );
 
             // Sort arg counts by total duration desc.
-            let mut sorted_ac: Vec<(usize, f64)> = ac_map.iter()
+            let mut sorted_ac: Vec<(usize, f64)> = ac_map
+                .iter()
                 .map(|(ac, m)| (*ac, m.values().map(|e| e.duration).sum()))
                 .collect();
             sorted_ac.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -574,9 +608,13 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
             for (arg_count, _) in sorted_ac {
                 let arg_map = ac_map.remove(&arg_count).unwrap();
                 let root_idx = build_template_tree(
-                    base_name, &arg_map, &[],
-                    1, Some(top_idx),
-                    &mut new_spans, &mut counts,
+                    base_name,
+                    &arg_map,
+                    &[],
+                    1,
+                    Some(top_idx),
+                    &mut new_spans,
+                    &mut counts,
                 );
                 new_spans[top_idx].children_indices.push(root_idx);
             }
@@ -598,28 +636,31 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
     }
 
     // ── Assign start_time positions ──────────────────────────────────────
-    let mut root_offset = 0.0f64;
-    for i in 0..new_spans.len() {
-        if new_spans[i].parent_index.is_none() {
-            new_spans[i].start_time = root_offset;
-            root_offset += new_spans[i].duration;
+    #[allow(clippy::needless_range_loop)]
+    {
+        let mut root_offset = 0.0f64;
+        for i in 0..new_spans.len() {
+            if new_spans[i].parent_index.is_none() {
+                new_spans[i].start_time = root_offset;
+                root_offset += new_spans[i].duration;
+            }
         }
-    }
-    for i in 0..new_spans.len() {
-        let parent_start = new_spans[i].start_time;
-        let mut cursor = parent_start;
-        let children: Vec<usize> = new_spans[i].children_indices.clone();
-        for &ci in &children {
-            new_spans[ci].start_time = cursor;
-            cursor += new_spans[ci].duration;
+        for i in 0..new_spans.len() {
+            let parent_start = new_spans[i].start_time;
+            let mut cursor = parent_start;
+            let children: Vec<usize> = new_spans[i].children_indices.clone();
+            for &ci in &children {
+                new_spans[ci].start_time = cursor;
+                cursor += new_spans[ci].duration;
+            }
         }
-    }
-    for i in 0..new_spans.len() {
-        let mut curr = i;
-        while let Some(pi) = new_spans[curr].parent_index {
-            curr = pi;
+        for i in 0..new_spans.len() {
+            let mut curr = i;
+            while let Some(pi) = new_spans[curr].parent_index {
+                curr = pi;
+            }
+            new_spans[i].root_span_index = curr;
         }
-        new_spans[i].root_span_index = curr;
     }
 
     (new_spans, counts)

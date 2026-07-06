@@ -7,16 +7,11 @@ use ratatui::widgets::{Block, Borders, Widget};
 
 use crate::app::tabs::Tab;
 
+#[derive(Default)]
 pub struct SearchState {
     pub query: String,
     pub visible: bool,
     pub locked: bool,
-}
-
-impl Default for SearchState {
-    fn default() -> Self {
-        Self { query: String::new(), visible: false, locked: false }
-    }
 }
 
 impl SearchState {
@@ -137,7 +132,11 @@ impl Widget for SearchBoxWidget<'_> {
 
         let title = Line::from(title_spans);
 
-        let text_color = if self.locked { Color::Black } else { Color::LightGreen };
+        let text_color = if self.locked {
+            Color::Black
+        } else {
+            Color::LightGreen
+        };
 
         let block = if self.locked {
             Block::default()
@@ -161,9 +160,11 @@ impl Widget for SearchBoxWidget<'_> {
             inner.x,
             inner.y,
             &text,
-            Style::default()
-                .fg(text_color)
-                .bg(if self.locked { Color::LightGreen } else { Color::Reset }),
+            Style::default().fg(text_color).bg(if self.locked {
+                Color::LightGreen
+            } else {
+                Color::Reset
+            }),
         );
     }
 }
@@ -236,7 +237,11 @@ mod tests {
 
     #[test]
     fn test_handle_key_esc_closes() {
-        let mut state = SearchState { visible: true, query: "test".into(), locked: false };
+        let mut state = SearchState {
+            visible: true,
+            query: "test".into(),
+            locked: false,
+        };
         let mut tab = MockTab::new();
         let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
         let consumed = state.handle_key(key, &mut tab);
@@ -248,7 +253,11 @@ mod tests {
 
     #[test]
     fn test_handle_key_char_appends() {
-        let mut state = SearchState { visible: true, query: String::new(), locked: false };
+        let mut state = SearchState {
+            visible: true,
+            query: String::new(),
+            locked: false,
+        };
         let mut tab = MockTab::new();
         let key = KeyEvent::new(KeyCode::Char('a'), crossterm::event::KeyModifiers::NONE);
         let consumed = state.handle_key(key, &mut tab);
@@ -259,7 +268,11 @@ mod tests {
 
     #[test]
     fn test_handle_key_backspace() {
-        let mut state = SearchState { visible: true, query: "ab".into(), locked: false };
+        let mut state = SearchState {
+            visible: true,
+            query: "ab".into(),
+            locked: false,
+        };
         let mut tab = MockTab::new();
         let key = KeyEvent::new(KeyCode::Backspace, crossterm::event::KeyModifiers::NONE);
         let consumed = state.handle_key(key, &mut tab);
@@ -270,7 +283,11 @@ mod tests {
 
     #[test]
     fn test_handle_key_enter_locks() {
-        let mut state = SearchState { visible: true, query: "foo".into(), locked: false };
+        let mut state = SearchState {
+            visible: true,
+            query: "foo".into(),
+            locked: false,
+        };
         let mut tab = MockTab::new();
         let key = KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
         let consumed = state.handle_key(key, &mut tab);
@@ -280,7 +297,11 @@ mod tests {
 
     #[test]
     fn test_handle_key_locked_esc_unlocks() {
-        let mut state = SearchState { visible: true, query: "foo".into(), locked: true };
+        let mut state = SearchState {
+            visible: true,
+            query: "foo".into(),
+            locked: true,
+        };
         let mut tab = MockTab::new();
         let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
         let consumed = state.handle_key(key, &mut tab);
@@ -291,7 +312,11 @@ mod tests {
 
     #[test]
     fn test_handle_key_locked_n_selects_next() {
-        let mut state = SearchState { visible: true, query: "foo".into(), locked: true };
+        let mut state = SearchState {
+            visible: true,
+            query: "foo".into(),
+            locked: true,
+        };
         let mut tab = MockTab::new();
         let key = KeyEvent::new(KeyCode::Char('n'), crossterm::event::KeyModifiers::NONE);
         let consumed = state.handle_key(key, &mut tab);
@@ -301,7 +326,11 @@ mod tests {
 
     #[test]
     fn test_handle_key_locked_p_selects_prev() {
-        let mut state = SearchState { visible: true, query: "foo".into(), locked: true };
+        let mut state = SearchState {
+            visible: true,
+            query: "foo".into(),
+            locked: true,
+        };
         let mut tab = MockTab::new();
         let key = KeyEvent::new(KeyCode::Char('p'), crossterm::event::KeyModifiers::NONE);
         let consumed = state.handle_key(key, &mut tab);
@@ -328,7 +357,10 @@ mod tests {
         let content: String = (0..area.width)
             .filter_map(|x| buf.cell((x, 1)).map(|c| c.symbol()))
             .collect();
-        assert!(content.contains('█'), "cursor should be visible, got: {content}");
+        assert!(
+            content.contains('█'),
+            "cursor should be visible, got: {content}"
+        );
     }
 
     #[test]
@@ -348,7 +380,10 @@ mod tests {
         let title: String = (0..area.width)
             .filter_map(|x| buf.cell((x, 0)).map(|c| c.symbol()))
             .collect();
-        assert!(title.contains("2 of 5"), "title should show 2 of 5, got: {title}");
+        assert!(
+            title.contains("2 of 5"),
+            "title should show 2 of 5, got: {title}"
+        );
     }
 
     #[test]
