@@ -168,7 +168,10 @@ impl<'a, V: DetailProvider> Widget for SpanDetails<'a, V> {
 
         if let Some(count) = self.view.count() {
             pills.push(format!(" {} times ", count));
-            pills.push(format!(" ⏱ avg {} ", format_time(span.duration / count as f64)));
+            pills.push(format!(
+                " ⏱ avg {} ",
+                format_time(span.duration / count as f64)
+            ));
             pills.push(format!(" ⏱ sum {} ", format_time(span.duration)));
         } else {
             pills.push(format!(" ⏱ {} ", format_time(span.duration)));

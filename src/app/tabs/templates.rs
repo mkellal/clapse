@@ -10,7 +10,7 @@ use crate::app::span::{Span, SpanType};
 use crate::app::tabs::Tab;
 use crate::app::view::OrderBy;
 use crate::widgets::flamegraph::{self, FlamegraphWidget};
-use crate::widgets::pch_candidates::{PchCandidate, CandidatesWidget, CopyMode};
+use crate::widgets::pch_candidates::{CandidatesWidget, CopyMode, PchCandidate};
 
 pub struct TemplatesTab {
     flamegraph: FlamegraphWidget,
@@ -109,8 +109,8 @@ impl Tab for TemplatesTab {
 
                 // Check extern candidate list clicks
                 if pch_rect.width > 0 {
-                    let block = ratatui::widgets::Block::default()
-                        .borders(ratatui::widgets::Borders::ALL);
+                    let block =
+                        ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL);
                     let inner = block.inner(pch_rect);
                     let list_top = inner.y + CandidatesWidget::HEADER_HEIGHT;
                     if coord.0 >= inner.x
@@ -147,10 +147,10 @@ impl Tab for TemplatesTab {
                         .saturating_sub(2)
                         .saturating_sub(CandidatesWidget::HEADER_HEIGHT)
                         / CandidatesWidget::CANDIDATE_ROWS;
-                    let max_scroll = self
-                        .extern_candidates
-                        .len()
-                        .saturating_sub(visible_count as usize) as u16;
+                    let max_scroll =
+                        self.extern_candidates
+                            .len()
+                            .saturating_sub(visible_count as usize) as u16;
                     self.extern_scroll_offset =
                         self.extern_scroll_offset.saturating_sub(1).min(max_scroll);
                     return;
@@ -165,10 +165,10 @@ impl Tab for TemplatesTab {
                         .saturating_sub(2)
                         .saturating_sub(CandidatesWidget::HEADER_HEIGHT)
                         / CandidatesWidget::CANDIDATE_ROWS;
-                    let max_scroll = self
-                        .extern_candidates
-                        .len()
-                        .saturating_sub(visible_count as usize) as u16;
+                    let max_scroll =
+                        self.extern_candidates
+                            .len()
+                            .saturating_sub(visible_count as usize) as u16;
                     self.extern_scroll_offset =
                         self.extern_scroll_offset.saturating_add(1).min(max_scroll);
                     return;
@@ -522,7 +522,8 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
     }
 
     // ── Group (name, arg_count) entries by bare name ─────────────────────
-    let mut by_base: HashMap<String, HashMap<usize, HashMap<Vec<String>, AggEntry>>> = HashMap::new();
+    let mut by_base: HashMap<String, HashMap<usize, HashMap<Vec<String>, AggEntry>>> =
+        HashMap::new();
     for ((name, arg_count), arg_map) in by_key {
         by_base.entry(name).or_default().insert(arg_count, arg_map);
     }
@@ -534,7 +535,11 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
     let mut sorted_bases: Vec<(String, f64)> = by_base
         .iter()
         .map(|(name, ac_map)| {
-            let dur: f64 = ac_map.values().flat_map(|m| m.values()).map(|e| e.duration).sum();
+            let dur: f64 = ac_map
+                .values()
+                .flat_map(|m| m.values())
+                .map(|e| e.duration)
+                .sum();
             (name.clone(), dur)
         })
         .collect();
@@ -546,27 +551,55 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
         if ac_map.len() == 1 {
             // Single arg count → no top-level wrapper needed.
             let (_, arg_map) = ac_map.into_iter().next().unwrap();
-            build_template_tree(base_name, &arg_map, &[], 0, None, &mut new_spans, &mut counts);
+            build_template_tree(
+                base_name,
+                &arg_map,
+                &[],
+                0,
+                None,
+                &mut new_spans,
+                &mut counts,
+            );
         } else {
             // Multiple arg counts → create bare-name top-level parent.
-            let total_dur: f64 = ac_map.values().flat_map(|m| m.values()).map(|e| e.duration).sum();
-            let total_tus: usize = ac_map.values().flat_map(|m| m.values()).map(|e| e.tu_count).sum();
-            let dominant = ac_map.values().flat_map(|m| m.values())
-                .max_by(|a, b| a.duration.partial_cmp(&b.duration).unwrap_or(std::cmp::Ordering::Equal))
+            let total_dur: f64 = ac_map
+                .values()
+                .flat_map(|m| m.values())
+                .map(|e| e.duration)
+                .sum();
+            let total_tus: usize = ac_map
+                .values()
+                .flat_map(|m| m.values())
+                .map(|e| e.tu_count)
+                .sum();
+            let dominant = ac_map
+                .values()
+                .flat_map(|m| m.values())
+                .max_by(|a, b| {
+                    a.duration
+                        .partial_cmp(&b.duration)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
                 .map(|e| (e.span_type, e.sublabel.clone()))
                 .unwrap_or((SpanType::Template, "Instantiation".to_string()));
             let label = base_name.clone();
 
             let top_idx = push_span(
-                &mut new_spans, &mut counts,
-                base_name.clone(), label,
-                total_dur, total_tus,
-                0, None,
-                dominant.0, dominant.1,
+                &mut new_spans,
+                &mut counts,
+                base_name.clone(),
+                label,
+                total_dur,
+                total_tus,
+                0,
+                None,
+                dominant.0,
+                dominant.1,
             );
 
             // Sort arg counts by total duration desc.
-            let mut sorted_ac: Vec<(usize, f64)> = ac_map.iter()
+            let mut sorted_ac: Vec<(usize, f64)> = ac_map
+                .iter()
                 .map(|(ac, m)| (*ac, m.values().map(|e| e.duration).sum()))
                 .collect();
             sorted_ac.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -574,9 +607,13 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
             for (arg_count, _) in sorted_ac {
                 let arg_map = ac_map.remove(&arg_count).unwrap();
                 let root_idx = build_template_tree(
-                    base_name, &arg_map, &[],
-                    1, Some(top_idx),
-                    &mut new_spans, &mut counts,
+                    base_name,
+                    &arg_map,
+                    &[],
+                    1,
+                    Some(top_idx),
+                    &mut new_spans,
+                    &mut counts,
                 );
                 new_spans[top_idx].children_indices.push(root_idx);
             }

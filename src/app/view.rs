@@ -345,7 +345,10 @@ pub fn load_spans_with_progress(
 
     // Process files sequentially so we can report smooth progress.
     for (file_idx, trace_file) in trace_files.iter().enumerate() {
-        let file_size = std::fs::metadata(trace_file).ok().map(|m| m.len()).unwrap_or(0);
+        let file_size = std::fs::metadata(trace_file)
+            .ok()
+            .map(|m| m.len())
+            .unwrap_or(0);
 
         let result = (|| {
             let name = clean_trace_file_path(trace_file, build_dir)

@@ -300,10 +300,10 @@ mod tests {
     fn test_content_height_some_thin_some_thick() {
         // cell_duration = 10.0
         let spans = vec![
-            make_span(1.0, 4),    // too thin, ignored
-            make_span(100.0, 2),  // visible, depth 2
-            make_span(5.0, 10),   // too thin, ignored even though depth is high
-            make_span(50.0, 3),   // visible, depth 3
+            make_span(1.0, 4),   // too thin, ignored
+            make_span(100.0, 2), // visible, depth 2
+            make_span(5.0, 10),  // too thin, ignored even though depth is high
+            make_span(50.0, 3),  // visible, depth 3
         ];
         let views: Vec<SpanView> = (0..4).map(make_view).collect();
         // max visible depth = 3 → height = 4

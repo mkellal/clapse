@@ -466,14 +466,14 @@ mod tests {
         let mut buf = empty_buffer(20, 3);
         let mut tracker = HashMap::new();
         // Left-align fractions at various thresholds
-        tracker.insert((0, 0), (0.06, SubcellAlign::Left, Color::White, 1));  // ▏ ( <0.125)
-        tracker.insert((1, 0), (0.2, SubcellAlign::Left, Color::White, 2));   // ▎ (0.125-0.25)
-        tracker.insert((2, 0), (0.3, SubcellAlign::Left, Color::White, 3));   // ▍ (0.25-0.375)
-        tracker.insert((3, 0), (0.45, SubcellAlign::Left, Color::White, 4));  // ▌ (0.375-0.5)
-        tracker.insert((4, 0), (0.55, SubcellAlign::Left, Color::White, 5));  // ▋ (0.5-0.625)
-        tracker.insert((5, 0), (0.7, SubcellAlign::Left, Color::White, 6));   // ▊ (0.625-0.75)
-        tracker.insert((6, 0), (0.85, SubcellAlign::Left, Color::White, 7));  // ▉ (0.75-0.875)
-        tracker.insert((7, 0), (0.95, SubcellAlign::Left, Color::White, 8));  // █ (>=0.875)
+        tracker.insert((0, 0), (0.06, SubcellAlign::Left, Color::White, 1)); // ▏ ( <0.125)
+        tracker.insert((1, 0), (0.2, SubcellAlign::Left, Color::White, 2)); // ▎ (0.125-0.25)
+        tracker.insert((2, 0), (0.3, SubcellAlign::Left, Color::White, 3)); // ▍ (0.25-0.375)
+        tracker.insert((3, 0), (0.45, SubcellAlign::Left, Color::White, 4)); // ▌ (0.375-0.5)
+        tracker.insert((4, 0), (0.55, SubcellAlign::Left, Color::White, 5)); // ▋ (0.5-0.625)
+        tracker.insert((5, 0), (0.7, SubcellAlign::Left, Color::White, 6)); // ▊ (0.625-0.75)
+        tracker.insert((6, 0), (0.85, SubcellAlign::Left, Color::White, 7)); // ▉ (0.75-0.875)
+        tracker.insert((7, 0), (0.95, SubcellAlign::Left, Color::White, 8)); // █ (>=0.875)
         flush_subcell_tracker(&mut buf, &tracker);
 
         assert_eq!(buf.cell((0, 0)).unwrap().symbol(), "▏");

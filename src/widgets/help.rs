@@ -57,17 +57,19 @@ impl Widget for HelpPopup<'_> {
         Clear.render(popup_area, buf);
 
         let block = Block::default()
-            .title(Line::from(vec![
-                Span::raw(" ℹ️ Help "),
-            ]))
+            .title(Line::from(vec![Span::raw(" ℹ️ Help ")]))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Gray));
 
         let inner_area = block.inner(popup_area);
         block.render(popup_area, buf);
 
-        let layout = Layout::horizontal([Constraint::Length(left_width), Constraint::Length(2), Constraint::Length(right_width)])
-            .split(inner_area);
+        let layout = Layout::horizontal([
+            Constraint::Length(left_width),
+            Constraint::Length(2),
+            Constraint::Length(right_width),
+        ])
+        .split(inner_area);
 
         render_column(left_col, layout[0], buf);
         render_column(right_col, layout[2], buf);
@@ -169,10 +171,19 @@ mod tests {
         // All 6 defaults should appear
         assert!(buffer_contains(&buf, "Quit"), "should contain Quit");
         assert!(buffer_contains(&buf, "Search"), "should contain Search");
-        assert!(buffer_contains(&buf, "Toggle help"), "should contain Toggle help");
-        assert!(buffer_contains(&buf, "Jump to tab"), "should contain Jump to tab");
+        assert!(
+            buffer_contains(&buf, "Toggle help"),
+            "should contain Toggle help"
+        );
+        assert!(
+            buffer_contains(&buf, "Jump to tab"),
+            "should contain Jump to tab"
+        );
         assert!(buffer_contains(&buf, "Next tab"), "should contain Next tab");
-        assert!(buffer_contains(&buf, "Close help"), "should contain Close help");
+        assert!(
+            buffer_contains(&buf, "Close help"),
+            "should contain Close help"
+        );
     }
 
     #[test]
@@ -185,7 +196,10 @@ mod tests {
         // Defaults still present
         assert!(buffer_contains(&buf, "Quit"));
         // Custom entry added
-        assert!(buffer_contains(&buf, "Custom action"), "should contain custom entry");
+        assert!(
+            buffer_contains(&buf, "Custom action"),
+            "should contain custom entry"
+        );
     }
 
     #[test]
@@ -199,7 +213,8 @@ mod tests {
         // Just verify it didn't panic — at minimum the title should render
         let has_content = (0..area.height).any(|y| {
             (0..area.width).any(|x| {
-                buf.cell((x, y)).map_or(false, |c| !c.symbol().trim().is_empty())
+                buf.cell((x, y))
+                    .map_or(false, |c| !c.symbol().trim().is_empty())
             })
         });
         assert!(has_content, "buffer should have some rendered content");

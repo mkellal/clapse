@@ -83,8 +83,7 @@ mod tests {
     #[test]
     fn test_clean_multiple_cmakefiles() {
         let build_dir = Path::new("/build");
-        let full_path =
-            Path::new("/build/CMakeFiles/a.dir/CMakeFiles/b.dir/src/z.cpp.json");
+        let full_path = Path::new("/build/CMakeFiles/a.dir/CMakeFiles/b.dir/src/z.cpp.json");
         let result = clean_trace_file_path(full_path, build_dir).unwrap();
         // First CMakeFiles → skip "a.dir", second CMakeFiles → skip "b.dir"
         assert_eq!(result, PathBuf::from("src/z.cpp"));
@@ -148,7 +147,10 @@ mod tests {
         fs::write(&obj_path, "").unwrap();
 
         let result = get_trace_files(&dir);
-        assert!(result.contains(&json_path), "should find a.cpp.json when .o exists");
+        assert!(
+            result.contains(&json_path),
+            "should find a.cpp.json when .o exists"
+        );
 
         cleanup_temp_dir(&dir);
     }
@@ -161,7 +163,10 @@ mod tests {
         // No .o file created
 
         let result = get_trace_files(&dir);
-        assert!(!result.contains(&json_path), "should exclude json without matching .o");
+        assert!(
+            !result.contains(&json_path),
+            "should exclude json without matching .o"
+        );
 
         cleanup_temp_dir(&dir);
     }

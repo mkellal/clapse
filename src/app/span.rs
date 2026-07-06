@@ -357,7 +357,10 @@ mod tests {
     #[test]
     fn test_clean_identifier_path_inside_build_dir() {
         let build = PathBuf::from("/build");
-        assert_eq!(clean_identifier("/build/src/file.cpp", &build), "src/file.cpp");
+        assert_eq!(
+            clean_identifier("/build/src/file.cpp", &build),
+            "src/file.cpp"
+        );
     }
 
     #[test]
@@ -394,7 +397,10 @@ mod tests {
 
     #[test]
     fn test_get_color_unit_default() {
-        assert_eq!(SpanType::Unit.get_color(None, None), Color::Rgb(255, 169, 127));
+        assert_eq!(
+            SpanType::Unit.get_color(None, None),
+            Color::Rgb(255, 169, 127)
+        );
     }
 
     #[test]
@@ -462,8 +468,8 @@ mod tests {
     fn test_link_spans_two_siblings() {
         let mut spans = vec![
             make_span(SpanType::Unit, "root", 0.0, f64::INFINITY),
-            make_span(SpanType::Source, "child1", 10.0, 3.0),   // ends at 13
-            make_span(SpanType::Source, "child2", 15.0, 4.0),   // starts at 15, after child1
+            make_span(SpanType::Source, "child1", 10.0, 3.0), // ends at 13
+            make_span(SpanType::Source, "child2", 15.0, 4.0), // starts at 15, after child1
         ];
         link_spans(&mut spans);
         // Both should be children of root
@@ -477,8 +483,8 @@ mod tests {
     fn test_link_spans_nested() {
         let mut spans = vec![
             make_span(SpanType::Unit, "root", 0.0, f64::INFINITY),
-            make_span(SpanType::Source, "parent", 10.0, 50.0),  // ends at 60
-            make_span(SpanType::Class, "child", 20.0, 10.0),    // inside parent
+            make_span(SpanType::Source, "parent", 10.0, 50.0), // ends at 60
+            make_span(SpanType::Class, "child", 20.0, 10.0),   // inside parent
         ];
         link_spans(&mut spans);
         // After sort: root(0), parent(1), child(2) since parent starts before child
@@ -494,13 +500,19 @@ mod tests {
     fn test_link_spans_root_inf_duration_adjusted() {
         let mut spans = vec![
             make_span(SpanType::Unit, "root", 0.0, f64::INFINITY),
-            make_span(SpanType::Source, "child1", 10.0, 5.0),  // ends at 15
-            make_span(SpanType::Source, "child2", 20.0, 8.0),  // ends at 28
+            make_span(SpanType::Source, "child1", 10.0, 5.0), // ends at 15
+            make_span(SpanType::Source, "child2", 20.0, 8.0), // ends at 28
         ];
         link_spans(&mut spans);
         // Root should have its start_time and duration computed from children
-        assert!((spans[0].start_time - 10.0).abs() < 0.001, "root start should be min child start");
-        assert!((spans[0].duration - 18.0).abs() < 0.001, "root dur should be 28-10=18");
+        assert!(
+            (spans[0].start_time - 10.0).abs() < 0.001,
+            "root start should be min child start"
+        );
+        assert!(
+            (spans[0].duration - 18.0).abs() < 0.001,
+            "root dur should be 28-10=18"
+        );
     }
 
     #[test]

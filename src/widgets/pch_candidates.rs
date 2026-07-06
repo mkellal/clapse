@@ -24,8 +24,18 @@ pub struct PchCandidate {
 
 impl PchCandidate {
     pub fn new(identifier: String, label: String, total_duration: f64, count: usize) -> Self {
-        let avg_duration = if count > 0 { total_duration / count as f64 } else { 0.0 };
-        Self { identifier, label, total_duration, count, avg_duration }
+        let avg_duration = if count > 0 {
+            total_duration / count as f64
+        } else {
+            0.0
+        };
+        Self {
+            identifier,
+            label,
+            total_duration,
+            count,
+            avg_duration,
+        }
     }
 }
 
@@ -80,13 +90,16 @@ impl<'a> CandidatesWidget<'a> {
     /// Build text for the clipboard based on copy_mode.
     pub fn build_copy_text(&self) -> String {
         match self.copy_mode {
-            CopyMode::Includes => self.candidates
+            CopyMode::Includes => self
+                .candidates
                 .iter()
                 .take(10)
                 .map(|c| {
                     let path = &c.identifier;
                     let display = &c.label;
-                    if path.starts_with('/') && (path.contains("/usr/") || path.contains("/include/")) {
+                    if path.starts_with('/')
+                        && (path.contains("/usr/") || path.contains("/include/"))
+                    {
                         format!("#include <{}>", display)
                     } else {
                         format!("#include \"{}\"", display)
@@ -94,7 +107,8 @@ impl<'a> CandidatesWidget<'a> {
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
-            CopyMode::ExternTemplate => self.candidates
+            CopyMode::ExternTemplate => self
+                .candidates
                 .iter()
                 .take(10)
                 .map(|c| format!("extern template {};", c.label))
@@ -125,7 +139,9 @@ impl Widget for CandidatesWidget<'_> {
             inner.x,
             inner.y,
             self.title,
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         );
 
         let (btn_text, btn_bg) = self.copy_button();
@@ -190,18 +206,29 @@ impl Widget for CandidatesWidget<'_> {
             let file_name = if cand.label.len() > max_name_w {
                 format!(
                     "…{}",
-                    &cand.label[cand.label.len().saturating_sub(max_name_w.saturating_sub(1))..]
+                    &cand.label[cand
+                        .label
+                        .len()
+                        .saturating_sub(max_name_w.saturating_sub(1))..]
                 )
             } else {
                 cand.label.clone()
             };
-            buf.set_string(inner.x, y0, &file_name, Style::default().fg(row_fg).bg(row_bg));
+            buf.set_string(
+                inner.x,
+                y0,
+                &file_name,
+                Style::default().fg(row_fg).bg(row_bg),
+            );
 
             // --- Row 1: total count avg (colored, 1 space, no overflow) ---
             let mut parts: Vec<(String, Color)> = Vec::new();
             parts.push((format_time(cand.total_duration), Color::Green));
             parts.push((format!("×{}", cand.count), Color::Yellow));
-            parts.push((format!("avg {}", format_time(cand.avg_duration)), Color::Gray));
+            parts.push((
+                format!("avg {}", format_time(cand.avg_duration)),
+                Color::Gray,
+            ));
 
             let mut line = String::new();
             for (i, (text, _color)) in parts.iter().enumerate() {

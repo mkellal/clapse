@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[allow(dead_code)]
 pub struct TraceEvent {
     pub name: Option<String>,
-    
+
     pub cat: Option<String>,
     pub ph: String, // Phase: B (Begin), E (End), X (Complete), etc.
     pub ts: f64,    // Timestamp
