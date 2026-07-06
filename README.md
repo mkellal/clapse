@@ -7,7 +7,9 @@
 Terminal-based C++ build profiling tool. Parses Clang `-ftime-trace` JSON output into an interactive flamegraph TUI for identifying compilation bottlenecks.
 
 <p align="center">
-  <i>Screenshot coming soon</i>
+  <img src="assets/fg.png" alt="Flamegraph tab" width="800">
+  <img src="assets/src.png" alt="Sources tab" width="400">
+  <img src="assets/tmpl.png" alt="Templates tab" width="400">
 </p>
 
 ## Table of Contents
