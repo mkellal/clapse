@@ -27,11 +27,11 @@ impl Widget for HelpPopup<'_> {
         all_combinations.extend(self.combinations.iter().copied());
 
         let n = all_combinations.len();
-        let rows = (n + 1) / 2;
+        let rows = n.div_ceil(2);
         let height = (rows as u16 + 2).min(area.height);
 
         // Find max width for each column to calculate total width
-        let midpoint = (n + 1) / 2;
+        let midpoint = n.div_ceil(2);
         let left_col = &all_combinations[..midpoint];
         let right_col = &all_combinations[midpoint..];
 
@@ -77,8 +77,8 @@ impl Widget for HelpPopup<'_> {
 }
 
 fn render_column(items: &[(&str, &str)], area: Rect, buf: &mut Buffer) {
-    let mut y = area.y;
-    for (key, desc) in items {
+    for (i, (key, desc)) in items.iter().enumerate() {
+        let y = area.y + i as u16;
         if y >= area.bottom() {
             break;
         }
@@ -90,7 +90,6 @@ fn render_column(items: &[(&str, &str)], area: Rect, buf: &mut Buffer) {
             Span::raw(*desc),
         ]);
         line.render(Rect::new(area.x, y, area.width, 1), buf);
-        y += 1;
     }
 }
 

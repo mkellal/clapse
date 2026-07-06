@@ -78,7 +78,7 @@ impl<'a> Widget for TrackWidget<'a> {
                 (Color::Rgb(49, 50, 68), Color::Rgb(108, 111, 133))
             };
             let label_style = Style::default().fg(fg).bg(bg);
-            let blank: String = std::iter::repeat(' ').take(area.width as usize).collect();
+            let blank: String = " ".repeat(area.width as usize);
             buf.set_string(area.x, y, &blank, label_style);
             let label_text = format!(" {} ", self.label.unwrap_or(""));
             buf.set_stringn(area.x, y, &label_text, area.width as usize, label_style);
@@ -104,6 +104,7 @@ impl<'a> Widget for TrackWidget<'a> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_spans(
     area: Rect,
     buf: &mut Buffer,
@@ -132,10 +133,10 @@ fn render_spans(
         view.was_displayed = false;
     }
 
-    for view_idx in 0..views.len() {
-        let span_index = views[view_idx].span_index;
-        let effective_start = views[view_idx].effective_start;
-        let index_in_parent = views[view_idx].index_in_parent;
+    for view in views.iter_mut() {
+        let span_index = view.span_index;
+        let effective_start = view.effective_start;
+        let index_in_parent = view.index_in_parent;
 
         let span = &spans[span_index];
 
@@ -207,7 +208,7 @@ fn render_spans(
             }
             core_bounds.insert(span_index, (cx_start, cx_end));
         }
-        views[view_idx].has_core_cells = span_core_bounds.is_some();
+        view.has_core_cells = span_core_bounds.is_some();
     }
 
     let subcell_winners = flush_subcell_tracker(buf, &subcell_tracker);
@@ -218,7 +219,7 @@ fn render_spans(
             view.was_displayed = true;
         }
     }
-    cell_map.extend(subcell_winners.into_iter().map(|(k, si)| (k, si)));
+    cell_map.extend(subcell_winners);
 }
 
 #[cfg(test)]

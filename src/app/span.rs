@@ -57,7 +57,7 @@ pub struct Span {
     pub depth: usize,
 }
 
-pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData, build_dir: &std::path::PathBuf) {
+pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData, build_dir: &std::path::Path) {
     spans.extend(data.trace_events.iter().filter_map(|event| {
         if event.ph != "X" {
             return None;
@@ -126,7 +126,7 @@ pub fn add_spans(spans: &mut Vec<Span>, data: &TraceData, build_dir: &std::path:
     link_spans(spans);
 }
 
-fn link_spans(spans: &mut Vec<Span>) {
+fn link_spans(spans: &mut [Span]) {
     // Sort everything after index 0 (the root Unit span stays at the front)
     spans[1..].sort_unstable_by(|a, b| {
         a.start_time

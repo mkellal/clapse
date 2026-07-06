@@ -94,7 +94,7 @@ impl Tab for SourcesTab {
                 if pch_rect.width > 0 {
                     let copy_confirmed = self
                         .copy_confirmed_at
-                        .map_or(false, |t| Instant::now().duration_since(t).as_secs() < 3);
+                        .is_some_and(|t| Instant::now().duration_since(t).as_secs() < 3);
                     let widget = CandidatesWidget {
                         title: "PCH Candidates",
                         candidates: &self.pch_candidates,
@@ -126,12 +126,12 @@ impl Tab for SourcesTab {
                         if idx < self.pch_candidates.len() {
                             self.pch_selected_index = Some(idx);
                             let ident = self.pch_candidates[idx].identifier.clone();
-                            if let Some(indices) = self.pch_span_map.get(&ident) {
-                                if let Some(&si) = indices.first() {
-                                    self.flamegraph.selected_span = Some(si);
-                                    self.flamegraph.zoom_to_selected(None);
-                                    self.flamegraph.center_selected_track();
-                                }
+                            if let Some(indices) = self.pch_span_map.get(&ident)
+                                && let Some(&si) = indices.first()
+                            {
+                                self.flamegraph.selected_span = Some(si);
+                                self.flamegraph.zoom_to_selected(None);
+                                self.flamegraph.center_selected_track();
                             }
                         }
                         return;
@@ -202,7 +202,7 @@ impl Tab for SourcesTab {
             let now = Instant::now();
             let copy_confirmed = self
                 .copy_confirmed_at
-                .map_or(false, |t| now.duration_since(t).as_secs() < 3);
+                .is_some_and(|t| now.duration_since(t).as_secs() < 3);
 
             CandidatesWidget {
                 title: "PCH Candidates",
@@ -296,8 +296,8 @@ fn aggregate_sources(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
             .copied();
 
         let start_time = if let Some(ref pp) = parent_path {
-            let p_index = parent_index.unwrap();
-            let p_start = new_spans[p_index as usize].start_time;
+            let p_index: usize = parent_index.unwrap();
+            let p_start = new_spans[p_index].start_time;
             let offset = current_offset_at_path.entry(pp.clone()).or_insert(0.0);
             let s = p_start + *offset;
             *offset += duration;

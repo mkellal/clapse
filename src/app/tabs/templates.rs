@@ -92,7 +92,7 @@ impl Tab for TemplatesTab {
                 if pch_rect.width > 0 {
                     let copy_confirmed = self
                         .copy_confirmed_at
-                        .map_or(false, |t| Instant::now().duration_since(t).as_secs() < 3);
+                        .is_some_and(|t| Instant::now().duration_since(t).as_secs() < 3);
                     let widget = CandidatesWidget {
                         title: "Extern Candidates",
                         candidates: &self.extern_candidates,
@@ -124,12 +124,12 @@ impl Tab for TemplatesTab {
                         if idx < self.extern_candidates.len() {
                             self.extern_selected_index = Some(idx);
                             let ident = self.extern_candidates[idx].identifier.clone();
-                            if let Some(indices) = self.extern_span_map.get(&ident) {
-                                if let Some(&si) = indices.first() {
-                                    self.flamegraph.selected_span = Some(si);
-                                    self.flamegraph.zoom_to_selected(None);
-                                    self.flamegraph.center_selected_track();
-                                }
+                            if let Some(indices) = self.extern_span_map.get(&ident)
+                                && let Some(&si) = indices.first()
+                            {
+                                self.flamegraph.selected_span = Some(si);
+                                self.flamegraph.zoom_to_selected(None);
+                                self.flamegraph.center_selected_track();
                             }
                         }
                         return;
@@ -200,7 +200,7 @@ impl Tab for TemplatesTab {
             let now = Instant::now();
             let copy_confirmed = self
                 .copy_confirmed_at
-                .map_or(false, |t| now.duration_since(t).as_secs() < 3);
+                .is_some_and(|t| now.duration_since(t).as_secs() < 3);
 
             CandidatesWidget {
                 title: "Extern Candidates",
@@ -303,6 +303,7 @@ struct AggEntry {
 // Span builder
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn push_span(
     new_spans: &mut Vec<Span>,
     counts: &mut Vec<usize>,
@@ -514,10 +515,10 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
     }
     for ((name, args), set) in &tu_sets {
         let key = (name.clone(), args.len());
-        if let Some(arg_map) = by_key.get_mut(&key) {
-            if let Some(entry) = arg_map.get_mut(args) {
-                entry.tu_count = set.len();
-            }
+        if let Some(arg_map) = by_key.get_mut(&key)
+            && let Some(entry) = arg_map.get_mut(args)
+        {
+            entry.tu_count = set.len();
         }
     }
 
@@ -635,28 +636,31 @@ fn aggregate_templates(raw_spans: &[Span]) -> (Vec<Span>, Vec<usize>) {
     }
 
     // ── Assign start_time positions ──────────────────────────────────────
-    let mut root_offset = 0.0f64;
-    for i in 0..new_spans.len() {
-        if new_spans[i].parent_index.is_none() {
-            new_spans[i].start_time = root_offset;
-            root_offset += new_spans[i].duration;
+    #[allow(clippy::needless_range_loop)]
+    {
+        let mut root_offset = 0.0f64;
+        for i in 0..new_spans.len() {
+            if new_spans[i].parent_index.is_none() {
+                new_spans[i].start_time = root_offset;
+                root_offset += new_spans[i].duration;
+            }
         }
-    }
-    for i in 0..new_spans.len() {
-        let parent_start = new_spans[i].start_time;
-        let mut cursor = parent_start;
-        let children: Vec<usize> = new_spans[i].children_indices.clone();
-        for &ci in &children {
-            new_spans[ci].start_time = cursor;
-            cursor += new_spans[ci].duration;
+        for i in 0..new_spans.len() {
+            let parent_start = new_spans[i].start_time;
+            let mut cursor = parent_start;
+            let children: Vec<usize> = new_spans[i].children_indices.clone();
+            for &ci in &children {
+                new_spans[ci].start_time = cursor;
+                cursor += new_spans[ci].duration;
+            }
         }
-    }
-    for i in 0..new_spans.len() {
-        let mut curr = i;
-        while let Some(pi) = new_spans[curr].parent_index {
-            curr = pi;
+        for i in 0..new_spans.len() {
+            let mut curr = i;
+            while let Some(pi) = new_spans[curr].parent_index {
+                curr = pi;
+            }
+            new_spans[i].root_span_index = curr;
         }
-        new_spans[i].root_span_index = curr;
     }
 
     (new_spans, counts)

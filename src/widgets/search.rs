@@ -7,20 +7,11 @@ use ratatui::widgets::{Block, Borders, Widget};
 
 use crate::app::tabs::Tab;
 
+#[derive(Default)]
 pub struct SearchState {
     pub query: String,
     pub visible: bool,
     pub locked: bool,
-}
-
-impl Default for SearchState {
-    fn default() -> Self {
-        Self {
-            query: String::new(),
-            visible: false,
-            locked: false,
-        }
-    }
 }
 
 impl SearchState {

@@ -1,7 +1,7 @@
 use glob::glob;
 use std::path::{Path, PathBuf};
 
-pub fn get_trace_files(build_dir: &PathBuf) -> Vec<PathBuf> {
+pub fn get_trace_files(build_dir: &Path) -> Vec<PathBuf> {
     let pattern = format!("{}/**/*.*.json", build_dir.display());
     // let pattern = format!("{}/**/irods_configuration_parser.cpp.json", build_dir.display());
     let paths: Vec<PathBuf> = match glob(&pattern) {
@@ -41,11 +41,11 @@ pub fn clean_trace_file_path(full_path: &Path, build_dir: &Path) -> Option<PathB
             continue;
         }
 
-        if let Some(comp_str) = component.as_os_str().to_str() {
-            if comp_str == "CMakeFiles" {
-                skip_next = true;
-                continue;
-            }
+        if let Some(comp_str) = component.as_os_str().to_str()
+            && comp_str == "CMakeFiles"
+        {
+            skip_next = true;
+            continue;
         }
 
         cleaned_path.push(component);

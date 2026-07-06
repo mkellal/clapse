@@ -16,15 +16,9 @@ pub struct TraceEvent {
     pub args: Option<Args>, // Extra data varies wildly
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct Args {
     pub detail: Option<String>,
-}
-
-impl Default for Args {
-    fn default() -> Self {
-        Args { detail: None }
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,7 +42,7 @@ pub fn parse_trace_file(path: &PathBuf) -> Option<TraceData> {
         Ok(data) => Some(data),
         Err(e) => {
             eprintln!("Failed to parse {:?}: {}", path, e);
-            return None;
+            None
         }
     }
 }

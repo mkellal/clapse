@@ -414,10 +414,10 @@ impl FlamegraphWidget {
     // ── Clipboard ───────────────────────────────────────────────────────
 
     pub fn copy_span_identifier(&self) {
-        if let Some(si) = self.selected_span {
-            if let Some(span) = self.spans.get(si) {
-                let _ = write_to_clipboard(&span.identifier);
-            }
+        if let Some(si) = self.selected_span
+            && let Some(span) = self.spans.get(si)
+        {
+            let _ = write_to_clipboard(&span.identifier);
         }
     }
 
@@ -780,10 +780,7 @@ impl FlamegraphWidget {
             let thumb_height = if self.content_height <= vscrollbar_area.height {
                 vscrollbar_area.height
             } else {
-                (((vscrollbar_area.height as u32) * (vscrollbar_area.height as u32)
-                    + self.content_height as u32
-                    - 1)
-                    / self.content_height as u32) as u16
+                ((vscrollbar_area.height as u32).pow(2)).div_ceil(self.content_height as u32) as u16
             }
             .clamp(1, vscrollbar_area.height);
 
