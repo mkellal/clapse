@@ -1,10 +1,25 @@
 # Clapse
 
+[![CI](https://github.com/mkellal/clapse/actions/workflows/build.yml/badge.svg)](https://github.com/mkellal/clapse/actions/workflows/build.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![MSRV](https://img.shields.io/badge/MSRV-1.82+-orange.svg)](https://blog.rust-lang.org/2024/10/17/Rust-1.82.0.html)
+
 Terminal-based C++ build profiling tool. Parses Clang `-ftime-trace` JSON output into an interactive flamegraph TUI for identifying compilation bottlenecks.
 
-## Overview
+<p align="center">
+  <i>Screenshot coming soon</i>
+</p>
 
-Clapse ingests `-ftime-trace` JSON files produced by a C++ build, constructs a hierarchical span model, and renders an interactive, zoomable flamegraph in the terminal. It surfaces per-file aggregates, template instantiation hotspots, and suggests PCH/extern template candidates.
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Keybindings](#keybindings)
+- [Architecture](#architecture)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Features
 
@@ -14,38 +29,49 @@ Clapse ingests `-ftime-trace` JSON files produced by a C++ build, constructs a h
 - **Search** — full-text search across all spans. `Enter` to seek, `n`/`p` to jump through matches.
 - **Keyboard + mouse** — arrow keys, scroll wheel, click-to-select. `?` shows contextual keybindings.
 
-## Requirements
+## Quick Start
 
-- Rust 1.82+ (edition 2024)
-- A C++ build directory containing `-ftime-trace` JSON files (file name pattern: `*.*.json`, paired with a corresponding `.o` file)
-
-Enable `-ftime-trace` in your build:
+Enable `-ftime-trace` in your CMake build with Ninja (recommended for accurate per-translation-unit timing):
 
 ```sh
-cmake -DCMAKE_CXX_FLAGS="-ftime-trace" ..
+cmake -GNinja -DCMAKE_CXX_FLAGS="-ftime-trace" ..
+ninja
 ```
+
+Then point Clapse at your build directory:
+
+```sh
+clapse build/
+```
+
+> **Note:** Ninja is recommended but optional. Without a `.ninja_log`, Clapse still works — translation unit start times default to `beginningOfTime` instead of actual wall-clock time, but per-file flamegraphs remain accurate.
 
 ## Installation
 
+### Prerequisites
+
+- Rust toolchain 1.82 or later ([rustup](https://rustup.rs))
+
+### From source
+
 ```sh
+git clone https://github.com/mkellal/clapse.git
+cd clapse
 cargo install --path .
 ```
 
-Or build and run directly:
-
-```sh
-cargo build --release
-./target/release/clapse <build-dir>
-```
+Or download from [GitHub Releases](https://github.com/mkellal/clapse/releases).
 
 ## Usage
 
 ```sh
-clapse <build-dir>          # Open the TUI on the given build directory
-clapse <build-dir> --verbose # Enable verbose JSON parsing output
+# Open the TUI on a build directory
+clapse <build-dir>
 ```
 
-### Keybindings
+Clapse automatically discovers `-ftime-trace` JSON files (matching `*.*.json`) that have a corresponding `.o` file in the build tree.
+
+## Keybindings
 
 | Key | Action |
 |-----|--------|
@@ -99,6 +125,18 @@ src/
     └── start_screen.rs    # Loading / empty-state screen
 ```
 
+## Contributing
+
+Bug reports and pull requests welcome on [GitHub](https://github.com/mkellal/clapse).
+
+Before submitting a PR, ensure:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy -- -D warnings
+cargo test
+```
+
 ## License
 
-MIT
+MIT © [Mouaadh KELLAL](https://github.com/mkellal)
